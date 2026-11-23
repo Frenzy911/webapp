@@ -9,16 +9,18 @@ A web app where organizers create events with a set capacity, attendees register
 | Part | Choice |
 |---|---|
 | Server | Node.js 22.13+ (tested on 24) with Express 5 |
-| Database | SQLite via Node's built-in `node:sqlite`, so there's nothing native to compile |
+| Database | MySQL 8 or MariaDB 10.6+ (XAMPP's "MySQL" works as is) via `mysql2`, with a connection pool |
 | Pages | Server-rendered EJS templates and plain CSS, mobile first. A little vanilla JS for the scanner. |
 | QR | `qrcode` draws the QR on the server. `jsQR` decodes it from the camera in the browser. |
-| Auth | Session cookie stored in SQLite. Passwords hashed with bcrypt (`bcryptjs`). |
+| Auth | Session cookie, with sessions stored in MySQL. Passwords hashed with bcrypt (`bcryptjs`). |
 | Email | `nodemailer` over SMTP (Mailtrap, Ethereal or Resend test mode) |
 | Tests | Node's built-in test runner. 46 tests cover the acceptance checks. |
 
 ## Setup and run
 
-You need **Node.js 22.13 or newer** (`node -v`).
+You need **Node.js 22.13 or newer** (`node -v`) and a **MySQL server**. The easiest is XAMPP: open the XAMPP Control Panel and click **Start** next to **MySQL**. MySQL 8 from the MySQL installer works too.
+
+The app connects as `root` with no password on `127.0.0.1:3306`, which is XAMPP's default. If yours is different, set `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD` and `MYSQL_DATABASE` in `.env`, or a single `DATABASE_URL=mysql://user:password@host:3306/cebu_events`. The `cebu_events` database and its tables are created automatically.
 
 ```powershell
 npm install
@@ -34,9 +36,10 @@ npm start
 
 Then open http://localhost:3000. Staff sign-in is at http://localhost:3000/staff/login.
 
-- `npm run setup` creates `.env` from `.env.example` with a fresh random `SESSION_SECRET`, then creates the database and loads the demo data.
+- `npm run setup` creates `.env` from `.env.example` with a fresh random `SESSION_SECRET`, then creates the MySQL database and tables and loads the demo data.
 - `npm run dev` runs the server and restarts it when files change.
-- `npm test` runs the automated acceptance tests. They use their own temporary database.
+- `npm test` runs the automated acceptance tests. MySQL must be running. Each test file creates its own throwaway database (`cebu_test_…`) on the same server and drops it afterwards, so your `cebu_events` data is never touched. Set `TEST_DATABASE_URL` to use another server.
+- You can browse the data in phpMyAdmin (http://localhost/phpmyadmin, database `cebu_events`). The schema is in [src/db/schema.sql](src/db/schema.sql), and you can also import that file by hand.
 
 ### Seed data
 
@@ -105,21 +108,19 @@ Emails are sent after registration (QR attached inline, plus a link to the ticke
 
 ### Booking rules (enforced on the server)
 - Capacity counts **Confirmed + Checked in**. Waitlisted and Cancelled don't count.
-- One **active** registration per email per event. Cancelled ones don't block registering again. This is a partial unique index in the database as well as an app check.
+- One **active** registration per email per event. Cancelled ones don't block registering again. The app checks this, and so does the database: MySQL has no partial unique index, so `registrations.active_email` is a generated column (the email while active, `NULL` once cancelled) with a `UNIQUE (event_id, active_email)` index.
 - Check-in only works for a **Confirmed** ticket, for the **selected event**, on the **event day**. A ticket checks in once.
-- Times are stored as ISO 8601 with a `+08:00` offset (e.g. `2026-12-05T18:00:00+08:00`) and shown in 12-hour Cebu time.
+- Times are stored as ISO 8601 text with a `+08:00` offset (e.g. `2026-12-05T18:00:00+08:00`, a `VARCHAR(25)` column, not `DATETIME`) and shown in 12-hour Cebu time. Every value has the same offset, so they sort and compare correctly as text, and the server's time zone setting doesn't matter.
 
 ## Last spot and double scans (Level 3 · item 13)
 
 Three layers make sure two people can't both get the last spot, and two phones can't both check in the same ticket:
 
-1. **One writer at a time.** Every booking action (register, cancel, promote, check-in, undo, capacity change) runs in `BEGIN IMMEDIATE` (`src/db/index.js`). That takes SQLite's write lock *before* reading the spot count, so a second request waits until the first commits, then sees the updated count.
-2. **The database refuses overbooking.** Triggers in `src/db/schema.sql` abort any insert or update that would push Confirmed + Checked in above capacity (`EVENT_FULL`), and any capacity change below the current count. This holds even for a second connection or a buggy code path. A test opens a separate connection to prove it.
+1. **One writer per event at a time.** Every booking action (register, cancel, promote, check-in, undo, event edit) runs in a transaction that starts with `SELECT id FROM events WHERE id = ? FOR UPDATE` (`transaction()` and `lockEvent()` in `src/db/index.js`). That locks the event row *before* the spot count is read, so a second request for the same event waits until the first commits. Connections use `READ COMMITTED`, so the waiting request then reads the updated count. Because every action takes the event lock first, they can't deadlock each other. If InnoDB still reports a deadlock, the transaction is retried.
+2. **The database refuses overbooking.** Triggers in `src/db/schema.sql` abort any insert or update that would push Confirmed + Checked in above capacity (`SIGNAL … 'EVENT_FULL'`), and any capacity change below the current count (`CAPACITY_BELOW_REGISTERED`). Each trigger locks the event row itself, so this holds even for a second connection that skips the app. A test opens a separate connection to prove it. `CHECK` constraints cover capacity ≥ 1, end after start, and the allowed status values.
 3. **Conditional updates.** Check-in is `UPDATE … SET status='checked_in' … WHERE id = ? AND status = 'confirmed'`. Only the request whose update changes a row says **Checked in**; every other one gets 0 rows changed and reports **Already checked in**. Cancel and undo work the same way.
 
 Tests: 12 browsers registering for the last spot at the same moment gives exactly 1 success and 11 "the last spot was just taken" (each offered the waitlist). 4 devices scanning one ticket at once gives exactly 1 "Checked in" and 3 "Already checked in".
-
-*If this moved to PostgreSQL/MySQL, layer 1 would become `SELECT … FROM events WHERE id = ? FOR UPDATE` inside a transaction.*
 
 ## Security (Level 3 · item 14 and the basics)
 
@@ -143,13 +144,13 @@ registrations  id, event_id → events, full_name, email (lower-case), mobile, t
                status (confirmed|checked_in|waitlisted|cancelled), registered_at,
                promoted_at, promoted_by, checked_in_at, checked_in_by,
                checkin_undone_at, checkin_undone_by, cancelled_at, cancelled_by     (… _by → staff_users)
-               UNIQUE (event_id, email) WHERE status <> 'cancelled'
+               active_email (generated: email unless cancelled)  UNIQUE (event_id, active_email)
 audit_logs     id, staff_user_id → staff_users, actor, action, target_type, target_id, event_id, details, created_at
 sessions       sid, data, expires_at
 email_outbox   id, kind, registration_id, to_address, subject, html, status (sent|failed|saved), error, created_at
 ```
 
-The full schema, including the capacity triggers, is in [src/db/schema.sql](src/db/schema.sql). The waitlist position is worked out on the fly: first come, first served, by registration order.
+All tables are InnoDB, `utf8mb4` (so names like *Ybañez* are stored correctly), with foreign keys on every `… → table` link above. Usernames are unique regardless of letter case. The full schema, including the capacity triggers, is in [src/db/schema.sql](src/db/schema.sql). The app applies it on start-up: it creates missing tables and triggers and leaves existing ones alone. The waitlist position is worked out on the fly: first come, first served, by registration order.
 
 ## Project layout
 
@@ -170,11 +171,12 @@ scripts/setup.js       first-time setup
 
 ## Deployment (Level 3 · item 17: not done yet)
 
-The app runs from the included `Dockerfile` on any host with HTTPS. For example, on Render:
+The app runs from the included `Dockerfile` on any host with HTTPS and a MySQL database. For example, on Railway or Render:
 
-1. Create a **Web Service** from the repo and choose **Docker**.
-2. Add a **persistent disk** mounted at `/data`, so the SQLite file survives redeploys.
+1. Create a **MySQL database** (Railway: *New → Database → MySQL*; on Render use an external MySQL such as Aiven or Railway). Note its connection URL.
+2. Create a **Web Service** from the repo and choose **Docker**.
 3. Set these environment variables:
+   - `DATABASE_URL=mysql://user:password@host:3306/dbname` (from step 1). The tables are created on first start.
    - `SESSION_SECRET` (long random string)
    - `APP_BASE_URL=https://<your-app>.onrender.com`
    - the SMTP sandbox settings
@@ -183,7 +185,9 @@ The app runs from the included `Dockerfile` on any host with HTTPS. For example,
 
 ## Known limitations
 
-- **One server process.** SQLite and the in-memory rate limiter assume a single instance, which is plenty for event-sized traffic. Rate-limit counters reset on restart. Running several instances would need PostgreSQL and a shared limiter (e.g. Redis).
+- **Rate limits are per server process.** The data, sessions and booking locks all live in MySQL, so several app instances can share one database safely. But the rate limiter is in memory, so each instance counts separately and the counters reset on restart. A shared limiter (e.g. Redis) would fix that.
+- **Triggers need permission.** On hosted MySQL with binary logging on, a non-admin user may not be allowed to create triggers. The app then stops with a message saying to set `log_bin_trust_function_creators=1`. XAMPP already sets it.
+- **Tested on MariaDB 10.11 (XAMPP).** The SQL is written for MySQL 8 too, but the test suite hasn't been run against MySQL 8 yet.
 - **Single-day events.** The event form has one date with a start and end time. Events past midnight aren't supported in the form.
 - **Check-in is open all of the event's date** (Cebu time), not only between the start and end times. This follows the "on the event day" rule.
 - **Seeded dates move.** Demo events are placed relative to the day you run `npm run seed`. Re-seed on the day you test.

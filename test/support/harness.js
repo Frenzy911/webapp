@@ -1,10 +1,13 @@
 'use strict';
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const util = require('node:util');
+const mysql = require('mysql2/promise');
 
 const { createApp } = require('../../src/app');
+const { mysqlSettings, ROOT } = require('../../src/config');
+const db = require('../../src/db');
 const { hashPassword } = require('../../src/services/staff');
 const { generateTicketCode, prefixFromTitle } = require('../../src/lib/tickets');
 const { fromLocalParts, toManilaIso } = require('../../src/lib/time');
@@ -14,12 +17,25 @@ const TODAY = '2026-12-05';
 const NOW = new Date(`${TODAY}T12:00:00+08:00`);
 const PASSWORDS = { organizer: 'organizer-pass-1', door: 'door-pass-1' };
 
+/**
+ * Tests use the same MySQL server as the app (MYSQL_* / DATABASE_URL from the environment or .env;
+ * TEST_DATABASE_URL overrides it), but each test file gets its own throwaway database,
+ * which is dropped afterwards. Your real data is never touched.
+ */
+function testServerSettings() {
+  const file = path.join(ROOT, '.env');
+  const fromFile = fs.existsSync(file) ? util.parseEnv(fs.readFileSync(file, 'utf8')) : {};
+  const env = { ...fromFile, ...process.env };
+  if (env.TEST_DATABASE_URL) env.DATABASE_URL = env.TEST_DATABASE_URL;
+  return mysqlSettings(env);
+}
+
 async function startApp({ rateLimits = {} } = {}) {
-  const dbFile = path.join(os.tmpdir(), `cebu-events-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+  const mysqlTest = { ...testServerSettings(), database: `cebu_test_${process.pid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}` };
   let clock = NOW;
-  const app = createApp({
+  const app = await createApp({
     skipEnvFile: true,
-    dbFile,
+    mysql: mysqlTest,
     sessionSecret: 'test-secret-0123456789abcdef0123456789abcdef',
     baseUrl: 'http://tickets.test',
     cookieSecure: false,
@@ -35,20 +51,28 @@ async function startApp({ rateLimits = {} } = {}) {
       ...rateLimits,
     },
   });
-  const db = app.locals.db;
+  const pool = app.locals.db;
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  const addStaff = db.prepare('INSERT INTO staff_users (name, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)');
-  addStaff.run('Olivia Organizer', 'organizer', hashPassword(PASSWORDS.organizer), 'organizer', toManilaIso(NOW));
-  addStaff.run('Dario Door', 'door', hashPassword(PASSWORDS.door), 'door', toManilaIso(NOW));
+  const addStaff = 'INSERT INTO staff_users (name, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)';
+  await db.run(pool, addStaff, ['Olivia Organizer', 'organizer', hashPassword(PASSWORDS.organizer), 'organizer', toManilaIso(NOW)]);
+  await db.run(pool, addStaff, ['Dario Door', 'door', hashPassword(PASSWORDS.door), 'door', toManilaIso(NOW)]);
 
   return {
     app,
-    db,
+    db: pool,
+    mysql: mysqlTest,
     base,
+    /** First row of a query, or null. */
+    get(sql, ...params) {
+      return db.get(pool, sql, params);
+    },
+    all(sql, ...params) {
+      return db.all(pool, sql, params);
+    },
     setNow(d) {
       clock = d;
     },
@@ -61,39 +85,42 @@ async function startApp({ rateLimits = {} } = {}) {
       return c;
     },
     /** Create an event directly in the database. Defaults: published, today 09:00–22:00. */
-    makeEvent({ title = 'Test Event', capacity = 5, status = 'published', date = TODAY, start = '09:00', end = '22:00', description = 'A test event.' } = {}) {
-      const res = db
-        .prepare(
-          `INSERT INTO events (title, description, venue, starts_at, ends_at, capacity, status, code_prefix, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-        )
-        .run(title, description, 'Ayala Center Cebu, Function Room 2', fromLocalParts(date, start), fromLocalParts(date, end), capacity, status, prefixFromTitle(title), toManilaIso(NOW), toManilaIso(NOW));
-      return Number(res.lastInsertRowid);
+    async makeEvent({ title = 'Test Event', capacity = 5, status = 'published', date = TODAY, start = '09:00', end = '22:00', description = 'A test event.' } = {}) {
+      const res = await db.run(
+        pool,
+        `INSERT INTO events (title, description, venue, starts_at, ends_at, capacity, status, code_prefix, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        [title, description, 'Ayala Center Cebu, Function Room 2', fromLocalParts(date, start), fromLocalParts(date, end), capacity, status, prefixFromTitle(title), toManilaIso(NOW), toManilaIso(NOW)]
+      );
+      return res.insertId;
     },
     /** Insert a registration directly (bypasses the web form). */
-    addRegistration(eventId, { name = 'Seed Person', email, mobile = '09170000000', status = 'confirmed' } = {}) {
-      const ev = db.prepare('SELECT code_prefix FROM events WHERE id = ?').get(eventId);
+    async addRegistration(eventId, { name = 'Seed Person', email, mobile = '09170000000', status = 'confirmed' } = {}) {
+      const ev = await db.get(pool, 'SELECT code_prefix FROM events WHERE id = ?', [eventId]);
       const code = generateTicketCode(ev.code_prefix);
-      db.prepare('INSERT INTO registrations (event_id, full_name, email, mobile, ticket_code, status, registered_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      await db.run(pool, 'INSERT INTO registrations (event_id, full_name, email, mobile, ticket_code, status, registered_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [
         eventId,
         name,
         email || `${Math.random().toString(36).slice(2)}@example.com`,
         mobile,
         code,
         status,
-        toManilaIso(NOW)
-      );
+        toManilaIso(NOW),
+      ]);
       return code;
     },
     reg(code) {
-      return db.prepare('SELECT * FROM registrations WHERE ticket_code = ?').get(code);
+      return db.get(pool, 'SELECT * FROM registrations WHERE ticket_code = ?', [code]);
     },
     async close() {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
-      app.locals.close();
-
-      for (const suffix of ['', '-wal', '-shm']) fs.rmSync(dbFile + suffix, { force: true });
+      // Let fire-and-forget emails finish writing before the pool closes.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await app.locals.close();
+      const admin = await mysql.createConnection({ ...mysqlTest, database: undefined });
+      await admin.query(`DROP DATABASE IF EXISTS ${mysql.escapeId(mysqlTest.database)}`);
+      await admin.end();
     },
   };
 }

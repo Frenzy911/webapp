@@ -4,6 +4,7 @@ const path = require('node:path');
 const ejs = require('ejs');
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
+const { run } = require('../db');
 const { toManilaIso, formatDate, formatTimeRange } = require('./time');
 const { ticketAccessToken } = require('./tickets');
 
@@ -29,10 +30,6 @@ function createMailer(config, db) {
         auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.pass } : undefined,
       })
     : null;
-
-  const insert = db.prepare(
-    'INSERT INTO email_outbox (kind, registration_id, to_address, subject, html, status, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  );
 
   async function sendTicketEmail(kind, reg, ev, extra = {}) {
     const ticketUrl = `${config.baseUrl}/tickets/${reg.ticket_code}?t=${ticketAccessToken(config.sessionSecret, reg.ticket_code)}`;
@@ -70,7 +67,11 @@ function createMailer(config, db) {
         console.error(`[mail] ${kind} email to registration ${reg.id} failed: ${err.message}`);
       }
     }
-    insert.run(kind, reg.id, reg.email, subject, previewHtml, status, error, toManilaIso(new Date()));
+    await run(
+      db,
+      'INSERT INTO email_outbox (kind, registration_id, to_address, subject, html, status, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [kind, reg.id, reg.email, subject, previewHtml, status, error, toManilaIso(new Date())]
+    );
     return status;
   }
 

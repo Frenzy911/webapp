@@ -1,6 +1,7 @@
 'use strict';
 
-// One-time local setup: create .env from .env.example (with a fresh random secret) and load demo data.
+// One-time local setup: create .env from .env.example (with a fresh random secret), then create the
+// MySQL database and tables and load demo data. MySQL must be running (XAMPP: Start MySQL).
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -22,9 +23,17 @@ const { loadConfig } = require('../src/config');
 const { openDb } = require('../src/db');
 const { seedDatabase } = require('../src/db/seed');
 
-const config = loadConfig();
-const db = openDb(config.dbFile);
-seedDatabase(db, config);
-db.close();
-console.log(`Database ready with demo data: ${path.relative(root, config.dbFile)}`);
-console.log('Next: npm start, then open ' + config.baseUrl);
+(async () => {
+  const config = loadConfig();
+  const db = await openDb(config.mysql);
+  try {
+    await seedDatabase(db, config);
+  } finally {
+    await db.end();
+  }
+  console.log(`MySQL database "${config.mysql.database}" on ${config.mysql.host}:${config.mysql.port} is ready with demo data.`);
+  console.log('Next: npm start, then open ' + config.baseUrl);
+})().catch((err) => {
+  console.error(`Setup failed: ${err.message}`);
+  process.exit(1);
+});

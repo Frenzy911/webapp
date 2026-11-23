@@ -7,7 +7,7 @@ const session = require('express-session');
 
 const { loadConfig } = require('./config');
 const { openDb } = require('./db');
-const { SqliteSessionStore } = require('./lib/sessionStore');
+const { MysqlSessionStore } = require('./lib/sessionStore');
 const { createMailer } = require('./lib/mailer');
 const { AppError } = require('./lib/errors');
 const time = require('./lib/time');
@@ -19,11 +19,12 @@ function wantsJson(req) {
   return req.originalUrl.startsWith('/staff/api/') || (req.get('accept') || '').startsWith('application/json');
 }
 
-function createApp(overrides = {}) {
+/** Build the Express app. Async because it connects to MySQL (and creates the tables) first. */
+async function createApp(overrides = {}) {
   const config = loadConfig(overrides);
-  const db = overrides.db || openDb(config.dbFile);
+  const db = overrides.db || (await openDb(config.mysql));
   const mailer = createMailer(config, db);
-  const sessionStore = new SqliteSessionStore(db);
+  const sessionStore = new MysqlSessionStore(db);
 
   const app = express();
   app.locals.config = config;
@@ -79,11 +80,11 @@ function createApp(overrides = {}) {
   );
 
   // Who is signed in (if anyone), CSRF token, flash messages, and view helpers.
-  app.use((req, res, next) => {
+  app.use(async (req, res, next) => {
     if (!req.session.csrfToken) req.session.csrfToken = crypto.randomBytes(24).toString('base64url');
     res.locals.csrfToken = req.session.csrfToken;
 
-    const staff = req.session.staffId ? getStaff(db, req.session.staffId) : null;
+    const staff = req.session.staffId ? await getStaff(db, req.session.staffId) : null;
     if (staff && staff.active) {
       req.staff = staff;
       res.locals.currentStaff = staff;
@@ -149,9 +150,9 @@ function createApp(overrides = {}) {
     res.page('error', { title: 'Error', heading: status === 404 ? 'Not found' : 'Something went wrong', message }, status);
   });
 
-  app.locals.close = () => {
+  app.locals.close = async () => {
     sessionStore.close();
-    if (!overrides.db) db.close();
+    if (!overrides.db) await db.end();
   };
   return app;
 }

@@ -4,7 +4,7 @@
 // emails, roles and the audit log. (Camera scanning and HTTPS deployment are checked by hand.)
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { DatabaseSync } = require('node:sqlite');
+const mysql = require('mysql2/promise');
 const { startApp } = require('./support/harness');
 const { ticketAccessToken } = require('../src/lib/tickets');
 
@@ -16,48 +16,50 @@ describe('Level 3 · race conditions', () => {
   after(() => t.close());
 
   it('when many people register for the last spot at once, only one gets it', async () => {
-    const ev = t.makeEvent({ title: 'Last Spot', capacity: 3 });
-    t.addRegistration(ev);
-    t.addRegistration(ev);
+    const ev = await t.makeEvent({ title: 'Last Spot', capacity: 3 });
+    await t.addRegistration(ev);
+    await t.addRegistration(ev);
     const results = await Promise.all(
       Array.from({ length: 12 }, (_, i) => t.client().register(ev, { name: `Racer ${i}`, email: `racer${i}@example.com` }))
     );
     assert.equal(results.filter((r) => r.status === 303).length, 1);
     assert.equal(results.filter((r) => r.status === 409).length, 11);
     assert.ok(results.filter((r) => r.status === 409).every((r) => /last spot was just taken/.test(r.text)));
-    const { n } = t.db.prepare("SELECT COUNT(*) AS n FROM registrations WHERE event_id = ? AND status IN ('confirmed','checked_in')").get(ev);
+    const { n } = await t.get("SELECT COUNT(*) AS n FROM registrations WHERE event_id = ? AND status IN ('confirmed','checked_in')", ev);
     assert.equal(n, 3);
   });
 
-  it('the database itself refuses to go over capacity, even from a second connection', () => {
-    const ev = t.makeEvent({ title: 'Trigger Guard', capacity: 1 });
-    t.addRegistration(ev);
-    const other = new DatabaseSync(t.db.location());
+  it('the database itself refuses to go over capacity, even from a second connection', async () => {
+    const ev = await t.makeEvent({ title: 'Trigger Guard', capacity: 1 });
+    await t.addRegistration(ev);
+    const other = await mysql.createConnection(t.mysql);
     try {
-      assert.throws(
-        () =>
-          other
-            .prepare("INSERT INTO registrations (event_id, full_name, email, mobile, ticket_code, status, registered_at) VALUES (?, 'X', 'x@example.com', '09170000000', 'TG-AAAAAAAA', 'confirmed', '2026-12-05T12:00:00+08:00')")
-            .run(ev),
+      await assert.rejects(
+        other.query(
+          "INSERT INTO registrations (event_id, full_name, email, mobile, ticket_code, status, registered_at) VALUES (?, 'X', 'x@example.com', '09170000000', 'TG-AAAAAAAA', 'confirmed', '2026-12-05T12:00:00+08:00')",
+          [ev]
+        ),
         /EVENT_FULL/
       );
-      const wl = other
-        .prepare("INSERT INTO registrations (event_id, full_name, email, mobile, ticket_code, status, registered_at) VALUES (?, 'Y', 'y@example.com', '09170000000', 'TG-BBBBBBBB', 'waitlisted', '2026-12-05T12:00:00+08:00')")
-        .run(ev);
-      assert.throws(() => other.prepare("UPDATE registrations SET status = 'confirmed' WHERE id = ?").run(wl.lastInsertRowid), /EVENT_FULL/);
+      const [wl] = await other.query(
+        "INSERT INTO registrations (event_id, full_name, email, mobile, ticket_code, status, registered_at) VALUES (?, 'Y', 'y@example.com', '09170000000', 'TG-BBBBBBBB', 'waitlisted', '2026-12-05T12:00:00+08:00')",
+        [ev]
+      );
+      await assert.rejects(other.query("UPDATE registrations SET status = 'confirmed' WHERE id = ?", [wl.insertId]), /EVENT_FULL/);
+      await assert.rejects(other.query('UPDATE events SET capacity = 0 WHERE id = ?', [ev]), /CAPACITY_BELOW_REGISTERED/);
     } finally {
-      other.close();
+      await other.end();
     }
   });
 
   it('when two devices check in the same ticket at once, only one says "Checked in"', async () => {
-    const ev = t.makeEvent({ title: 'Door Rush', capacity: 10 });
+    const ev = await t.makeEvent({ title: 'Door Rush', capacity: 10 });
     const { code } = await t.client().register(ev, { name: 'Popular Person', email: 'popular@example.com' });
     const phones = await Promise.all([t.staffClient('door'), t.staffClient('door'), t.staffClient('organizer'), t.staffClient('door')]);
     const results = await Promise.all(phones.map((p) => p.checkIn(ev, code)));
     assert.equal(results.filter((r) => r.result === 'checked_in').length, 1);
     assert.equal(results.filter((r) => r.result === 'already').length, 3);
-    assert.equal(t.db.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'checked_in' AND details LIKE ?").get(`${code}%`).n, 1);
+    assert.equal((await t.get("SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'checked_in' AND details LIKE ?", `${code}%`)).n, 1);
   });
 });
 
@@ -66,7 +68,7 @@ describe('Level 3 · secure codes and rate limits', () => {
   let ev;
   before(async () => {
     t = await startApp({ rateLimits: { lookup: { windowMs: 60_000, max: 5 } } });
-    ev = t.makeEvent({ title: 'Cebu Dev Meetup 2026', capacity: 30 });
+    ev = await t.makeEvent({ title: 'Cebu Dev Meetup 2026', capacity: 30 });
   });
   after(() => t.close());
 
@@ -79,7 +81,7 @@ describe('Level 3 · secure codes and rate limits', () => {
 
   it('guessed, sequential or edited codes never check anyone in', async () => {
     const door = await t.staffClient('door');
-    const real = t.db.prepare('SELECT ticket_code FROM registrations WHERE event_id = ? LIMIT 1').get(ev).ticket_code;
+    const real = (await t.get('SELECT ticket_code FROM registrations WHERE event_id = ? LIMIT 1', ev)).ticket_code;
     const last = real.slice(-1);
     const edited = real.slice(0, -1) + (last === 'Z' ? 'Y' : last === '9' ? '8' : String.fromCharCode(last.charCodeAt(0) + 1) === 'I' ? 'J' : String.fromCharCode(last.charCodeAt(0) + 1));
     for (const guess of ['CDM-000001', 'CDM-00000001', 'CDM-00000002', 'CDM-7K3P9Q', edited, real.replace('CDM', 'CDN')]) {
@@ -87,7 +89,7 @@ describe('Level 3 · secure codes and rate limits', () => {
       const r = await door.checkIn(ev, guess);
       assert.equal(r.result, 'invalid', guess);
     }
-    assert.equal(t.db.prepare("SELECT COUNT(*) AS n FROM registrations WHERE status = 'checked_in'").get().n, 0);
+    assert.equal((await t.get("SELECT COUNT(*) AS n FROM registrations WHERE status = 'checked_in'")).n, 0);
   });
 
   it('rate-limits ticket lookups', async () => {
@@ -107,9 +109,9 @@ describe('Level 3 · email confirmation', () => {
   });
   after(() => t.close());
 
-  const waitForEmail = async (db, kind, regId) => {
+  const waitForEmail = async (kind, regId) => {
     for (let i = 0; i < 50; i += 1) {
-      const row = db.prepare('SELECT * FROM email_outbox WHERE kind = ? AND registration_id = ?').get(kind, regId);
+      const row = await t.get('SELECT * FROM email_outbox WHERE kind = ? AND registration_id = ?', kind, regId);
       if (row) return row;
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -117,10 +119,10 @@ describe('Level 3 · email confirmation', () => {
   };
 
   it('sends a registration email with the QR code and a working ticket link', async () => {
-    const ev = t.makeEvent({ title: 'Email Event', capacity: 1 });
+    const ev = await t.makeEvent({ title: 'Email Event', capacity: 1 });
     const { code } = await t.client().register(ev, { name: 'Mail Reader', email: 'reader@example.com' });
-    const reg = t.reg(code);
-    const mail = await waitForEmail(t.db, 'registration', reg.id);
+    const reg = await t.reg(code);
+    const mail = await waitForEmail('registration', reg.id);
     assert.ok(mail, 'registration email recorded');
     assert.equal(mail.to_address, 'reader@example.com');
     assert.equal(mail.status, 'saved'); // no SMTP in tests
@@ -140,11 +142,11 @@ describe('Level 3 · email confirmation', () => {
   });
 
   it('sends a waitlist email, and a promotion email with the QR code', async () => {
-    const ev = t.makeEvent({ title: 'Promo Event', capacity: 1 });
+    const ev = await t.makeEvent({ title: 'Promo Event', capacity: 1 });
     const first = await t.client().register(ev, { email: 'first@example.com' });
     const { code } = await t.client().register(ev, { name: 'Wait Lister', email: 'waiter@example.com', waitlist: true });
-    const reg = t.reg(code);
-    const wl = await waitForEmail(t.db, 'waitlist', reg.id);
+    const reg = await t.reg(code);
+    const wl = await waitForEmail('waitlist', reg.id);
     assert.ok(wl);
     assert.match(wl.html, /position #1/);
     assert.ok(!wl.html.includes('data:image/png'), 'no QR while waitlisted');
@@ -154,7 +156,7 @@ describe('Level 3 · email confirmation', () => {
     await owner.post('/tickets/find', { code: first.code, contact: 'first@example.com' });
     await owner.post(`/tickets/${first.code}/cancel`);
     await org.post(`/staff/events/${ev}/promote`);
-    const promo = await waitForEmail(t.db, 'promotion', reg.id);
+    const promo = await waitForEmail('promotion', reg.id);
     assert.ok(promo, 'promotion email recorded');
     assert.match(promo.subject, /Good news/);
     assert.match(promo.html, /data:image\/png;base64,/);
@@ -175,7 +177,7 @@ describe('Level 3 · roles and audit log', () => {
 
   it('door staff can only use check-in; organizers can manage events', async () => {
     const door = await t.staffClient('door');
-    const ev = t.makeEvent({ title: 'Role Test' });
+    const ev = await t.makeEvent({ title: 'Role Test' });
     assert.equal((await door.get('/staff')).location, '/staff/checkin');
     assert.equal((await door.get('/staff/checkin')).status, 200);
     assert.equal((await door.get(`/staff/events/${ev}/checkin`)).status, 200);
@@ -185,7 +187,7 @@ describe('Level 3 · roles and audit log', () => {
     const create = await door.post('/staff/events', { title: 'Sneaky', venue: 'X', date: '2026-12-10', start_time: '10:00', end_time: '11:00', capacity: '5', status: 'published' });
     assert.equal(create.status, 403);
     assert.equal((await door.post(`/staff/events/${ev}/status`, { status: 'closed' })).status, 403);
-    assert.equal(t.db.prepare("SELECT COUNT(*) AS n FROM events WHERE title = 'Sneaky'").get().n, 0);
+    assert.equal((await t.get("SELECT COUNT(*) AS n FROM events WHERE title = 'Sneaky'")).n, 0);
 
     const org = await t.staffClient('organizer');
     const ok = await org.post('/staff/events', { title: 'Allowed', venue: 'X', date: '2026-12-10', start_time: '10:00', end_time: '11:00', capacity: '5', status: 'published' });
@@ -200,7 +202,7 @@ describe('Level 3 · roles and audit log', () => {
     const nd = t.client();
     await nd.login('newdoor', 'long-enough-pw');
     assert.equal((await nd.get('/staff/checkin')).status, 200);
-    const id = t.db.prepare("SELECT id FROM staff_users WHERE username = 'newdoor'").get().id;
+    const id = (await t.get("SELECT id FROM staff_users WHERE username = 'newdoor'")).id;
     await org.post(`/staff/users/${id}/active`, { active: '0' });
     assert.equal((await nd.get('/staff/checkin')).status, 302);
   });
@@ -213,12 +215,12 @@ describe('Level 3 · roles and audit log', () => {
     await org.post(`/staff/events/${ev}`, { title: 'Audit Me', venue: 'Hall B', date: '2026-12-05', start_time: '09:00', end_time: '21:00', capacity: '1', status: 'published' });
     const a = await t.client().register(ev, { email: 'aa@example.com' });
     const b = await t.client().register(ev, { email: 'bb@example.com', waitlist: true });
-    await org.post(`/staff/registrations/${t.reg(a.code).id}/cancel`);
+    await org.post(`/staff/registrations/${(await t.reg(a.code)).id}/cancel`);
     await org.post(`/staff/events/${ev}/promote`);
     await door.checkIn(ev, b.code);
-    await door.postJson(`/staff/api/registrations/${t.reg(b.code).id}/undo-checkin`);
+    await door.postJson(`/staff/api/registrations/${(await t.reg(b.code)).id}/undo-checkin`);
 
-    const actions = t.db.prepare('SELECT action, staff_user_id, actor, created_at, details FROM audit_logs WHERE event_id = ? ORDER BY id').all(ev);
+    const actions = await t.all('SELECT action, staff_user_id, actor, created_at, details FROM audit_logs WHERE event_id = ? ORDER BY id', ev);
     assert.deepEqual(
       actions.map((x) => x.action),
       ['event_created', 'event_updated', 'registration_cancelled', 'waitlist_promoted', 'checked_in', 'checkin_undone']

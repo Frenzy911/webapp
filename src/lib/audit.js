@@ -1,5 +1,6 @@
 'use strict';
 
+const { run } = require('../db');
 const { toManilaIso } = require('./time');
 
 const ACTION_LABELS = {
@@ -23,11 +24,13 @@ function staffLabel(staff) {
  * Record who did what, and when. Call inside the same transaction as the change,
  * so the log and the data can never disagree.
  */
-function logAudit(db, { staff, actor, action, targetType = null, targetId = null, eventId = null, details = null }, now) {
-  db.prepare(
+async function logAudit(db, { staff, actor, action, targetType = null, targetId = null, eventId = null, details = null }, now) {
+  await run(
+    db,
     `INSERT INTO audit_logs (staff_user_id, actor, action, target_type, target_id, event_id, details, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(staff ? staff.id : null, actor || (staff ? staffLabel(staff) : 'System'), action, targetType, targetId, eventId, details, toManilaIso(now));
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [staff ? staff.id : null, actor || (staff ? staffLabel(staff) : 'System'), action, targetType, targetId, eventId, details, toManilaIso(now)]
+  );
 }
 
 module.exports = { logAudit, staffLabel, ACTION_LABELS };

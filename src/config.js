@@ -14,6 +14,30 @@ function loadEnvFile() {
   if (fs.existsSync(file)) process.loadEnvFile(file);
 }
 
+/**
+ * MySQL connection settings. DATABASE_URL (mysql://user:pass@host:3306/dbname, as cloud hosts give you)
+ * wins over the separate MYSQL_* values. The defaults match a fresh XAMPP install.
+ */
+function mysqlSettings(env) {
+  if (env.DATABASE_URL) {
+    const u = new URL(env.DATABASE_URL);
+    return {
+      host: u.hostname,
+      port: Number(u.port) || 3306,
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      database: decodeURIComponent(u.pathname.replace(/^\//, '')) || 'cebu_events',
+    };
+  }
+  return {
+    host: env.MYSQL_HOST || '127.0.0.1',
+    port: Number(env.MYSQL_PORT) || 3306,
+    user: env.MYSQL_USER || 'root',
+    password: env.MYSQL_PASSWORD || '',
+    database: env.MYSQL_DATABASE || 'cebu_events',
+  };
+}
+
 function bool(value, fallback = false) {
   if (value === undefined || value === '') return fallback;
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
@@ -40,7 +64,7 @@ function loadConfig(overrides = {}) {
     production,
     port,
     baseUrl: (env.APP_BASE_URL || `http://localhost:${port}`).replace(/\/+$/, ''),
-    dbFile: env.DB_FILE ? path.resolve(ROOT, env.DB_FILE) : path.join(ROOT, 'data', 'app.db'),
+    mysql: mysqlSettings(env),
     sessionSecret,
     trustProxy: env.TRUST_PROXY ? (/^\d+$/.test(env.TRUST_PROXY) ? Number(env.TRUST_PROXY) : bool(env.TRUST_PROXY)) : false,
     cookieSecure: bool(env.COOKIE_SECURE, production),
@@ -73,4 +97,4 @@ function loadConfig(overrides = {}) {
   return config;
 }
 
-module.exports = { loadConfig, ROOT };
+module.exports = { loadConfig, mysqlSettings, ROOT };

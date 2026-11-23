@@ -4,6 +4,7 @@ const express = require('express');
 
 const { AppError, ValidationError } = require('../lib/errors');
 const { rateLimit } = require('../lib/rateLimit');
+const { all, get } = require('../db');
 const { ACTION_LABELS } = require('../lib/audit');
 const { manilaDateString, addDays, formatDateTime } = require('../lib/time');
 const events = require('../services/events');
@@ -99,60 +100,60 @@ module.exports = function staffRoutes(config) {
   router.get('/', (req, res) => res.redirect(req.staff.role === 'organizer' ? '/staff/dashboard' : '/staff/checkin'));
 
   // ------------------------------------------------- check-in (both roles)
-  router.get('/checkin', (req, res) => {
-    res.page('staff/checkin-select', { title: 'Check-in', events: events.listCheckinEvents(req.db, req.now) });
+  router.get('/checkin', async (req, res) => {
+    res.page('staff/checkin-select', { title: 'Check-in', events: await events.listCheckinEvents(req.db, req.now) });
   });
 
-  function loadCheckinEvent(req) {
-    const ev = events.getEvent(req.db, req.params.id, req.now);
+  async function loadCheckinEvent(req) {
+    const ev = await events.getEvent(req.db, req.params.id, req.now);
     if (!ev || ev.status === 'draft') throw new AppError('NOT_FOUND', 'Event not found.', { status: 404 });
     return ev;
   }
 
-  function renderCheckin(req, res, ev, result = null, status = 200) {
+  async function renderCheckin(req, res, ev, result = null, status = 200) {
     res.page(
       'staff/checkin',
       {
         title: `Check-in · ${ev.title}`,
         ev,
         result,
-        stats: checkin.stats(req.db, ev.id),
-        recent: checkin.recentCheckins(req.db, ev.id),
+        stats: await checkin.stats(req.db, ev.id),
+        recent: await checkin.recentCheckins(req.db, ev.id),
       },
       status
     );
   }
 
-  router.get('/events/:id/checkin', (req, res) => renderCheckin(req, res, loadCheckinEvent(req)));
+  router.get('/events/:id/checkin', async (req, res) => renderCheckin(req, res, await loadCheckinEvent(req)));
 
   // Plain form fallback (works without JavaScript, e.g. a USB scanner that types + Enter).
-  router.post('/events/:id/checkin', checkinLimiter, (req, res) => {
-    const ev = loadCheckinEvent(req);
-    const result = checkin.checkIn(req.db, ev.id, req.body.code, req.staff, req.now);
-    renderCheckin(req, res, events.getEvent(req.db, ev.id, req.now), result);
+  router.post('/events/:id/checkin', checkinLimiter, async (req, res) => {
+    const ev = await loadCheckinEvent(req);
+    const result = await checkin.checkIn(req.db, ev.id, req.body.code, req.staff, req.now);
+    await renderCheckin(req, res, await events.getEvent(req.db, ev.id, req.now), result);
   });
 
-  router.post('/api/events/:id/checkin', checkinLimiter, (req, res) => {
-    const ev = loadCheckinEvent(req);
-    const result = checkin.checkIn(req.db, ev.id, req.body.code, req.staff, req.now);
-    res.json({ ...result, recent: checkin.recentCheckins(req.db, ev.id) });
+  router.post('/api/events/:id/checkin', checkinLimiter, async (req, res) => {
+    const ev = await loadCheckinEvent(req);
+    const result = await checkin.checkIn(req.db, ev.id, req.body.code, req.staff, req.now);
+    res.json({ ...result, recent: await checkin.recentCheckins(req.db, ev.id) });
   });
 
-  router.get('/api/events/:id/stats', (req, res) => {
-    const ev = loadCheckinEvent(req);
-    res.json({ stats: checkin.stats(req.db, ev.id), recent: checkin.recentCheckins(req.db, ev.id) });
+  router.get('/api/events/:id/stats', async (req, res) => {
+    const ev = await loadCheckinEvent(req);
+    res.json({ stats: await checkin.stats(req.db, ev.id), recent: await checkin.recentCheckins(req.db, ev.id) });
   });
 
-  router.post('/api/registrations/:id/undo-checkin', (req, res) => {
-    const out = checkin.undoCheckIn(req.db, req.params.id, req.staff, req.now);
-    res.json({ ok: true, name: out.registration.full_name, code: out.registration.ticket_code, stats: out.stats, recent: checkin.recentCheckins(req.db, out.registration.event_id) });
+  router.post('/api/registrations/:id/undo-checkin', async (req, res) => {
+    const out = await checkin.undoCheckIn(req.db, req.params.id, req.staff, req.now);
+    res.json({ ok: true, name: out.registration.full_name, code: out.registration.ticket_code, stats: out.stats, recent: await checkin.recentCheckins(req.db, out.registration.event_id) });
   });
 
-  router.post('/registrations/:id/undo-checkin', (req, res) => {
-    const reg = regs.getRegistration(req.db, req.params.id);
+  router.post('/registrations/:id/undo-checkin', async (req, res) => {
+    const reg = await regs.getRegistration(req.db, req.params.id);
     const back = safeReturn(req.body.return_to, reg ? `/staff/events/${reg.event_id}/checkin` : '/staff');
     try {
-      const out = checkin.undoCheckIn(req.db, req.params.id, req.staff, req.now);
+      const out = await checkin.undoCheckIn(req.db, req.params.id, req.staff, req.now);
       req.flash('success', `Check-in undone for ${out.registration.full_name} (${out.registration.ticket_code}). They can be checked in again.`);
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
@@ -164,12 +165,12 @@ module.exports = function staffRoutes(config) {
   // ------------------------------------------------------- organizer only
   router.use(requireRole('organizer'));
 
-  router.get('/dashboard', (req, res) => {
-    res.page('staff/dashboard', { title: 'Dashboard', events: events.listUpcomingEvents(req.db, req.now) });
+  router.get('/dashboard', async (req, res) => {
+    res.page('staff/dashboard', { title: 'Dashboard', events: await events.listUpcomingEvents(req.db, req.now) });
   });
 
-  router.get('/events', (req, res) => {
-    res.page('staff/events', { title: 'Events', events: events.listAllEvents(req.db, req.now) });
+  router.get('/events', async (req, res) => {
+    res.page('staff/events', { title: 'Events', events: await events.listAllEvents(req.db, req.now) });
   });
 
   function renderEventForm(res, { ev = null, values, errors = {}, status = 200 }) {
@@ -195,9 +196,9 @@ module.exports = function staffRoutes(config) {
     };
   }
 
-  router.post('/events', (req, res) => {
+  router.post('/events', async (req, res) => {
     try {
-      const id = events.createEvent(req.db, req.body, req.staff, req.now);
+      const id = await events.createEvent(req.db, req.body, req.staff, req.now);
       req.flash('success', 'Event created.');
       res.redirect(303, `/staff/events/${id}/attendees`);
     } catch (err) {
@@ -206,17 +207,17 @@ module.exports = function staffRoutes(config) {
     }
   });
 
-  router.get('/events/:id/edit', (req, res) => {
-    const ev = events.getEvent(req.db, req.params.id, req.now);
+  router.get('/events/:id/edit', async (req, res) => {
+    const ev = await events.getEvent(req.db, req.params.id, req.now);
     if (!ev) throw new AppError('NOT_FOUND', 'Event not found.', { status: 404 });
     renderEventForm(res, { ev, values: events.formValuesFromEvent(ev) });
   });
 
-  router.post('/events/:id', (req, res) => {
-    const ev = events.getEvent(req.db, req.params.id, req.now);
+  router.post('/events/:id', async (req, res) => {
+    const ev = await events.getEvent(req.db, req.params.id, req.now);
     if (!ev) throw new AppError('NOT_FOUND', 'Event not found.', { status: 404 });
     try {
-      events.updateEvent(req.db, ev.id, req.body, req.staff, req.now);
+      await events.updateEvent(req.db, ev.id, req.body, req.staff, req.now);
       req.flash('success', 'Event saved.');
       res.redirect(303, `/staff/events/${ev.id}/attendees`);
     } catch (err) {
@@ -225,24 +226,24 @@ module.exports = function staffRoutes(config) {
     }
   });
 
-  router.post('/events/:id/status', (req, res) => {
-    const ev = events.setEventStatus(req.db, req.params.id, String(req.body.status || ''), req.staff, req.now);
+  router.post('/events/:id/status', async (req, res) => {
+    const ev = await events.setEventStatus(req.db, req.params.id, String(req.body.status || ''), req.staff, req.now);
     req.flash('success', `"${ev.title}" is now ${req.body.status === 'published' ? 'published' : 'closed'}.`);
     res.redirect(303, safeReturn(req.body.return_to, '/staff/events'));
   });
 
-  router.get('/events/:id/attendees', (req, res) => {
-    const ev = events.getEvent(req.db, req.params.id, req.now);
+  router.get('/events/:id/attendees', async (req, res) => {
+    const ev = await events.getEvent(req.db, req.params.id, req.now);
     if (!ev) throw new AppError('NOT_FOUND', 'Event not found.', { status: 404 });
     const q = String(req.query.q || '').slice(0, 100);
     const status = regs.STATUS_FILTERS.includes(req.query.status) ? req.query.status : '';
-    res.page('staff/attendees', { title: `Attendees · ${ev.title}`, ev, rows: regs.listRegistrations(req.db, ev.id, { q, status }), q, status });
+    res.page('staff/attendees', { title: `Attendees · ${ev.title}`, ev, rows: await regs.listRegistrations(req.db, ev.id, { q, status }), q, status });
   });
 
-  router.get('/events/:id/attendees.csv', (req, res) => {
-    const ev = events.getEvent(req.db, req.params.id, req.now);
+  router.get('/events/:id/attendees.csv', async (req, res) => {
+    const ev = await events.getEvent(req.db, req.params.id, req.now);
     if (!ev) throw new AppError('NOT_FOUND', 'Event not found.', { status: 404 });
-    const rows = regs.listRegistrations(req.db, ev.id);
+    const rows = await regs.listRegistrations(req.db, ev.id);
     const statusLabel = res.locals.statusLabel;
     const header = ['Ticket code', 'Full name', 'Email', 'Mobile', 'Status', 'Waitlist position', 'Registered at', 'Checked in at', 'Checked in by', 'Cancelled at'];
     const lines = [header.map(csvCell).join(',')];
@@ -269,11 +270,11 @@ module.exports = function staffRoutes(config) {
     res.send('﻿' + lines.join('\r\n') + '\r\n'); // BOM so Excel reads UTF-8 (ñ, é...)
   });
 
-  router.post('/events/:id/promote', (req, res) => {
+  router.post('/events/:id/promote', async (req, res) => {
     const back = `/staff/events/${Number(req.params.id) || 0}/attendees`;
     try {
-      const reg = regs.promoteNext(req.db, req.params.id, req.staff, req.now);
-      const ev = events.getEvent(req.db, reg.event_id, req.now);
+      const reg = await regs.promoteNext(req.db, req.params.id, req.staff, req.now);
+      const ev = await events.getEvent(req.db, reg.event_id, req.now);
       req.app.locals.mailer.queue('promotion', reg, ev);
       req.flash('success', `${reg.full_name} (${reg.ticket_code}) moved from the waitlist to confirmed. A confirmation email is on its way.`);
     } catch (err) {
@@ -283,11 +284,11 @@ module.exports = function staffRoutes(config) {
     res.redirect(303, back);
   });
 
-  router.post('/registrations/:id/cancel', (req, res) => {
-    const reg = regs.getRegistration(req.db, req.params.id);
+  router.post('/registrations/:id/cancel', async (req, res) => {
+    const reg = await regs.getRegistration(req.db, req.params.id);
     if (!reg) throw new AppError('NOT_FOUND', 'Registration not found.', { status: 404 });
     try {
-      regs.cancelRegistration(req.db, reg.id, { staff: req.staff }, req.now);
+      await regs.cancelRegistration(req.db, reg.id, { staff: req.staff }, req.now);
       req.flash('success', `Cancelled ${reg.full_name} (${reg.ticket_code}).`);
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
@@ -297,7 +298,7 @@ module.exports = function staffRoutes(config) {
   });
 
   // ------------------------------------------------------------ audit log
-  router.get('/audit', (req, res) => {
+  router.get('/audit', async (req, res) => {
     const eventId = Number(req.query.event) || null;
     const action = Object.keys(ACTION_LABELS).includes(req.query.action) ? req.query.action : '';
     const where = [];
@@ -310,36 +311,36 @@ module.exports = function staffRoutes(config) {
       where.push('a.action = ?');
       params.push(action);
     }
-    const rows = req.db
-      .prepare(
-        `SELECT a.*, e.title AS event_title FROM audit_logs a LEFT JOIN events e ON e.id = a.event_id
-         ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY a.id DESC LIMIT 300`
-      )
-      .all(...params);
-    res.page('staff/audit', { title: 'Audit log', rows, actions: ACTION_LABELS, action, eventId, events: events.listAllEvents(req.db, req.now) });
+    const rows = await all(
+      req.db,
+      `SELECT a.*, e.title AS event_title FROM audit_logs a LEFT JOIN events e ON e.id = a.event_id
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY a.id DESC LIMIT 300`,
+      params
+    );
+    res.page('staff/audit', { title: 'Audit log', rows, actions: ACTION_LABELS, action, eventId, events: await events.listAllEvents(req.db, req.now) });
   });
 
   // ---------------------------------------------------------- staff users
-  function renderUsers(req, res, { values = { name: '', username: '', role: 'door' }, errors = {}, status = 200 } = {}) {
-    res.page('staff/users', { title: 'Staff accounts', users: staffSvc.listStaff(req.db), values, errors }, status);
+  async function renderUsers(req, res, { values = { name: '', username: '', role: 'door' }, errors = {}, status = 200 } = {}) {
+    res.page('staff/users', { title: 'Staff accounts', users: await staffSvc.listStaff(req.db), values, errors }, status);
   }
 
   router.get('/users', (req, res) => renderUsers(req, res));
 
-  router.post('/users', (req, res) => {
+  router.post('/users', async (req, res) => {
     try {
-      staffSvc.createStaff(req.db, req.body, req.staff, req.now);
+      await staffSvc.createStaff(req.db, req.body, req.staff, req.now);
       req.flash('success', `Account @${String(req.body.username).trim().toLowerCase()} created.`);
       res.redirect(303, '/staff/users');
     } catch (err) {
       if (!(err instanceof ValidationError)) throw err;
-      renderUsers(req, res, { values: { name: req.body.name || '', username: req.body.username || '', role: req.body.role || 'door' }, errors: err.errors, status: 422 });
+      await renderUsers(req, res, { values: { name: req.body.name || '', username: req.body.username || '', role: req.body.role || 'door' }, errors: err.errors, status: 422 });
     }
   });
 
-  router.post('/users/:id/active', (req, res) => {
+  router.post('/users/:id/active', async (req, res) => {
     try {
-      staffSvc.setStaffActive(req.db, req.params.id, req.body.active === '1', req.staff, req.now);
+      await staffSvc.setStaffActive(req.db, req.params.id, req.body.active === '1', req.staff, req.now);
       req.flash('success', 'Account updated.');
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
@@ -349,21 +350,23 @@ module.exports = function staffRoutes(config) {
   });
 
   // --------------------------------------------------------- email outbox
-  router.get('/outbox', (req, res) => {
-    const rows = req.db.prepare('SELECT id, kind, to_address, subject, status, error, created_at FROM email_outbox ORDER BY id DESC LIMIT 100').all();
+  const OUTBOX_LIST = 'SELECT id, kind, to_address, subject, status, error, created_at FROM email_outbox ORDER BY id DESC LIMIT 100';
+
+  router.get('/outbox', async (req, res) => {
+    const rows = await all(req.db, OUTBOX_LIST);
     res.page('staff/outbox', { title: 'Email outbox', rows, smtpConfigured: req.app.locals.mailer.smtpConfigured, selected: null });
   });
 
-  router.get('/outbox/:id', (req, res) => {
-    const rows = req.db.prepare('SELECT id, kind, to_address, subject, status, error, created_at FROM email_outbox ORDER BY id DESC LIMIT 100').all();
-    const selected = req.db.prepare('SELECT id, kind, to_address, subject, status, error, created_at FROM email_outbox WHERE id = ?').get(Number(req.params.id) || 0);
+  router.get('/outbox/:id', async (req, res) => {
+    const rows = await all(req.db, OUTBOX_LIST);
+    const selected = await get(req.db, 'SELECT id, kind, to_address, subject, status, error, created_at FROM email_outbox WHERE id = ?', [Number(req.params.id) || 0]);
     if (!selected) throw new AppError('NOT_FOUND', 'Email not found.', { status: 404 });
     res.page('staff/outbox', { title: 'Email outbox', rows, smtpConfigured: req.app.locals.mailer.smtpConfigured, selected });
   });
 
   // The email body, shown inside a sandboxed iframe with its own strict CSP.
-  router.get('/outbox/:id/raw', (req, res) => {
-    const row = req.db.prepare('SELECT html FROM email_outbox WHERE id = ?').get(Number(req.params.id) || 0);
+  router.get('/outbox/:id/raw', async (req, res) => {
+    const row = await get(req.db, 'SELECT html FROM email_outbox WHERE id = ?', [Number(req.params.id) || 0]);
     if (!row) throw new AppError('NOT_FOUND', 'Email not found.', { status: 404 });
     res.set({
       'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'self'",

@@ -30,7 +30,7 @@ describe('Level 2 · event management', () => {
     const res = await org.post('/staff/events', eventForm());
     assert.equal(res.status, 303);
     const id = Number(res.location.match(/\/staff\/events\/(\d+)\//)[1]);
-    const ev = t.db.prepare('SELECT * FROM events WHERE id = ?').get(id);
+    const ev = await t.get('SELECT * FROM events WHERE id = ?', id);
     assert.equal(ev.status, 'draft');
     assert.equal(ev.starts_at, '2026-12-12T13:00:00+08:00');
     assert.equal(ev.code_prefix, 'FCW');
@@ -50,32 +50,32 @@ describe('Level 2 · event management', () => {
     const res = await org.post('/staff/events', eventForm({ title: 'Backwards', start_time: '18:00', end_time: '09:00' }));
     assert.equal(res.status, 422);
     assert.match(res.text, /End time must be after the start time/);
-    assert.equal(t.db.prepare("SELECT COUNT(*) AS n FROM events WHERE title = 'Backwards'").get().n, 0);
+    assert.equal((await t.get("SELECT COUNT(*) AS n FROM events WHERE title = 'Backwards'")).n, 0);
     const zero = await org.post('/staff/events', eventForm({ title: 'Zero', capacity: '0' }));
     assert.equal(zero.status, 422);
     assert.match(zero.text, /Capacity must be a whole number, at least 1/);
   });
 
   it('blocks lowering capacity below the number already registered, with a message', async () => {
-    const id = t.makeEvent({ title: 'Capacity Test', capacity: 5 });
-    for (let i = 0; i < 3; i += 1) t.addRegistration(id);
-    t.addRegistration(id, { status: 'waitlisted' }); // waitlisted people don't count
+    const id = await t.makeEvent({ title: 'Capacity Test', capacity: 5 });
+    for (let i = 0; i < 3; i += 1) await t.addRegistration(id);
+    await t.addRegistration(id, { status: 'waitlisted' }); // waitlisted people don't count
     const res = await org.post(`/staff/events/${id}`, eventForm({ title: 'Capacity Test', date: '2026-12-05', capacity: '2', status: 'published' }));
     assert.equal(res.status, 422);
     assert.match(res.text, /can(&#39;|')t be lower than the 3 people already registered/);
-    assert.equal(t.db.prepare('SELECT capacity FROM events WHERE id = ?').get(id).capacity, 5);
+    assert.equal((await t.get('SELECT capacity FROM events WHERE id = ?', id)).capacity, 5);
     const ok = await org.post(`/staff/events/${id}`, eventForm({ title: 'Capacity Test', date: '2026-12-05', capacity: '3', status: 'published' }));
     assert.equal(ok.status, 303);
-    assert.equal(t.db.prepare('SELECT capacity FROM events WHERE id = ?').get(id).capacity, 3);
+    assert.equal((await t.get('SELECT capacity FROM events WHERE id = ?', id)).capacity, 3);
   });
 
   it('closed events stop accepting registrations', async () => {
-    const id = t.makeEvent({ title: 'Soon Closed', capacity: 5 });
+    const id = await t.makeEvent({ title: 'Soon Closed', capacity: 5 });
     await org.post(`/staff/events/${id}/status`, { status: 'closed' });
     const res = await t.client().register(id, { email: 'late@example.com' });
     assert.equal(res.status, 303);
     assert.equal(res.location, `/events/${id}`);
-    assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?').get(id).n, 0);
+    assert.equal((await t.get('SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?', id)).n, 0);
     assert.ok(!(await t.client().get('/')).text.includes('Soon Closed'), 'closed events are not listed');
   });
 });
@@ -88,7 +88,7 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
   const codes = {};
   before(async () => {
     t = await startApp();
-    ev = t.makeEvent({ title: 'Tiny Meetup', capacity: 2 });
+    ev = await t.makeEvent({ title: 'Tiny Meetup', capacity: 2 });
     door = await t.staffClient('door');
     org = await t.staffClient('organizer');
   });
@@ -118,7 +118,7 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
     assert.equal(r.result, 'waitlisted');
     assert.equal(r.title, 'On waitlist — not confirmed');
     assert.equal(r.tone, 'danger');
-    assert.equal(t.reg(codes.w1).status, 'waitlisted');
+    assert.equal((await t.reg(codes.w1)).status, 'waitlisted');
   });
 
   it('cancelling a confirmed registration frees a spot, and scanning it shows "Cancelled"', async () => {
@@ -131,7 +131,7 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
     assert.equal((await stranger.post(`/tickets/${codes.b}/cancel`)).status, 404, 'only the owner can cancel');
     const cancel = await owner.post(`/tickets/${codes.b}/cancel`);
     assert.equal(cancel.status, 303);
-    assert.equal(t.reg(codes.b).status, 'cancelled');
+    assert.equal((await t.reg(codes.b)).status, 'cancelled');
 
     const after = await t.client().get(`/events/${ev}`);
     assert.match(after.text, /<strong>1<\/strong> of 2 spots left/);
@@ -144,19 +144,19 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
   it('promoting the first waitlisted person gives them a ticket that checks in', async () => {
     const res = await org.post(`/staff/events/${ev}/promote`);
     assert.equal(res.status, 303);
-    assert.equal(t.reg(codes.w1).status, 'confirmed');
-    assert.equal(t.reg(codes.w2).status, 'waitlisted', 'only the first in line');
+    assert.equal((await t.reg(codes.w1)).status, 'confirmed');
+    assert.equal((await t.reg(codes.w2)).status, 'waitlisted', 'only the first in line');
     const r = await door.checkIn(ev, codes.w1);
     assert.equal(r.result, 'checked_in');
     assert.equal(r.name, 'Waiter One');
 
     // No more spots: promoting again is refused.
     await org.post(`/staff/events/${ev}/promote`);
-    assert.equal(t.reg(codes.w2).status, 'waitlisted');
+    assert.equal((await t.reg(codes.w2)).status, 'waitlisted');
   });
 
   it('a checked-in registration cannot be cancelled (by staff or attendee)', async () => {
-    const reg = t.reg(codes.w1);
+    const reg = await t.reg(codes.w1);
     const res = await org.post(`/staff/registrations/${reg.id}/cancel`);
     assert.equal(res.status, 303);
     const page = await org.get(res.location);
@@ -164,19 +164,19 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
     const owner = t.client();
     await owner.post('/tickets/find', { code: codes.w1, contact: 'w1@example.com' });
     await owner.post(`/tickets/${codes.w1}/cancel`);
-    assert.equal(t.reg(codes.w1).status, 'checked_in');
+    assert.equal((await t.reg(codes.w1)).status, 'checked_in');
   });
 
   it('undoing a check-in lets the ticket check in again, and records who and when', async () => {
-    const reg = t.reg(codes.w1);
+    const reg = await t.reg(codes.w1);
     const res = await door.postJson(`/staff/api/registrations/${reg.id}/undo-checkin`);
     assert.equal(res.status, 200);
-    const row = t.reg(codes.w1);
+    const row = await t.reg(codes.w1);
     assert.equal(row.status, 'confirmed');
     assert.equal(row.checked_in_at, null);
     assert.equal(row.checkin_undone_by, 2); // the door account
     assert.equal(row.checkin_undone_at, '2026-12-05T12:00:00+08:00');
-    const log = t.db.prepare("SELECT * FROM audit_logs WHERE action = 'checkin_undone' AND target_id = ?").get(reg.id);
+    const log = await t.get("SELECT * FROM audit_logs WHERE action = 'checkin_undone' AND target_id = ?", reg.id);
     assert.ok(log);
     assert.equal(log.staff_user_id, 2);
     assert.match(log.actor, /Dario Door/);
@@ -184,15 +184,16 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
   });
 
   it('the dashboard counts match the attendee list', async () => {
-    t.addRegistration(ev, { status: 'waitlisted' });
+    await t.addRegistration(ev, { status: 'waitlisted' });
     const dash = await org.get('/staff/dashboard');
     const card = dash.text.slice(dash.text.indexOf('Tiny Meetup'));
     const num = (label) => Number(card.match(new RegExp(`<dt>${label}</dt><dd>(\\d+|—)</dd>`))[1]);
-    const db = t.db.prepare(
+    const db = await t.get(
       `SELECT SUM(status IN ('confirmed','checked_in')) AS confirmed, SUM(status='waitlisted') AS waitlisted,
               SUM(status='cancelled') AS cancelled, SUM(status='checked_in') AS checked_in, SUM(status='confirmed') AS no_shows
-       FROM registrations WHERE event_id = ?`
-    ).get(ev);
+       FROM registrations WHERE event_id = ?`,
+      ev
+    );
     assert.equal(num('Capacity'), 2);
     assert.equal(num('Confirmed'), db.confirmed);
     assert.equal(num('Waitlisted'), db.waitlisted);
@@ -208,8 +209,8 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
   });
 
   it('no-shows are hidden until the event starts', async () => {
-    const future = t.makeEvent({ title: 'Later Today', start: '18:00', end: '21:00' });
-    t.addRegistration(future);
+    const future = await t.makeEvent({ title: 'Later Today', start: '18:00', end: '21:00' });
+    await t.addRegistration(future);
     const dash = await org.get('/staff/dashboard');
     const card = dash.text.slice(dash.text.indexOf('Later Today'));
     assert.match(card, /<dt>No-shows<\/dt><dd>—<\/dd>/);
@@ -222,14 +223,14 @@ describe('Level 2 · waitlist, cancel, promote, undo', () => {
     assert.match(res.headers.get('content-disposition'), /attachment; filename="TM-attendees-2026-12-05\.csv"/);
     assert.ok(res.text.startsWith('﻿"Ticket code","Full name","Email","Mobile","Status"'));
     const lines = res.text.trim().split('\r\n');
-    const total = t.db.prepare('SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?').get(ev).n;
+    const total = (await t.get('SELECT COUNT(*) AS n FROM registrations WHERE event_id = ?', ev)).n;
     assert.equal(lines.length, total + 1);
     assert.ok(lines.some((l) => l.includes('"Attendee A","a@example.com","=""09171234567""","Confirmed"')));
     assert.ok(lines.some((l) => l.includes('"Cancelled"')));
   });
 
   it('neutralises spreadsheet formulas in exported names', async () => {
-    t.addRegistration(ev, { name: '=HYPERLINK("http://evil")', status: 'waitlisted' });
+    await t.addRegistration(ev, { name: '=HYPERLINK("http://evil")', status: 'waitlisted' });
     const res = await org.get(`/staff/events/${ev}/attendees.csv`);
     assert.ok(res.text.includes(`"'=HYPERLINK(""http://evil"")"`));
   });

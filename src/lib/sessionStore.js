@@ -1,20 +1,14 @@
 'use strict';
 
 const session = require('express-session');
+const { get, run } = require('../db');
 
-/** express-session store backed by the app's SQLite database (survives restarts). */
-class SqliteSessionStore extends session.Store {
+/** express-session store backed by the app's MySQL database (survives restarts). */
+class MysqlSessionStore extends session.Store {
   constructor(db, { ttlMs = 24 * 60 * 60 * 1000 } = {}) {
     super();
     this.db = db;
     this.ttlMs = ttlMs;
-    this.getStmt = db.prepare('SELECT data FROM sessions WHERE sid = ? AND expires_at > ?');
-    this.setStmt = db.prepare(
-      'INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?) ON CONFLICT(sid) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at'
-    );
-    this.touchStmt = db.prepare('UPDATE sessions SET expires_at = ? WHERE sid = ?');
-    this.destroyStmt = db.prepare('DELETE FROM sessions WHERE sid = ?');
-    this.pruneStmt = db.prepare('DELETE FROM sessions WHERE expires_at <= ?');
     this.timer = setInterval(() => this.prune(), 15 * 60 * 1000);
     this.timer.unref();
   }
@@ -25,47 +19,39 @@ class SqliteSessionStore extends session.Store {
   }
 
   get(sid, cb) {
-    try {
-      const row = this.getStmt.get(sid, Date.now());
-      cb(null, row ? JSON.parse(row.data) : null);
-    } catch (err) {
-      cb(err);
-    }
+    get(this.db, 'SELECT data FROM sessions WHERE sid = ? AND expires_at > ?', [sid, Date.now()])
+      .then((row) => {
+        let sess;
+        try {
+          sess = row ? JSON.parse(row.data) : null;
+        } catch (err) {
+          return cb(err);
+        }
+        return cb(null, sess);
+      }, cb);
   }
 
   set(sid, sess, cb = () => {}) {
-    try {
-      this.setStmt.run(sid, JSON.stringify(sess), this.expiry(sess));
-      cb(null);
-    } catch (err) {
-      cb(err);
-    }
+    const data = JSON.stringify(sess);
+    const expires = this.expiry(sess);
+    run(this.db, 'INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data = ?, expires_at = ?', [sid, data, expires, data, expires])
+      .then(() => cb(null), cb);
   }
 
   touch(sid, sess, cb = () => {}) {
-    try {
-      this.touchStmt.run(this.expiry(sess), sid);
-      cb(null);
-    } catch (err) {
-      cb(err);
-    }
+    run(this.db, 'UPDATE sessions SET expires_at = ? WHERE sid = ?', [this.expiry(sess), sid])
+      .then(() => cb(null), cb);
   }
 
   destroy(sid, cb = () => {}) {
-    try {
-      this.destroyStmt.run(sid);
-      cb(null);
-    } catch (err) {
-      cb(err);
-    }
+    run(this.db, 'DELETE FROM sessions WHERE sid = ?', [sid])
+      .then(() => cb(null), cb);
   }
 
   prune() {
-    try {
-      this.pruneStmt.run(Date.now());
-    } catch {
-      /* db closed */
-    }
+    run(this.db, 'DELETE FROM sessions WHERE expires_at <= ?', [Date.now()]).catch(() => {
+      /* pool closed */
+    });
   }
 
   close() {
@@ -73,4 +59,4 @@ class SqliteSessionStore extends session.Store {
   }
 }
 
-module.exports = { SqliteSessionStore };
+module.exports = { MysqlSessionStore };

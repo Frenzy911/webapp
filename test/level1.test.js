@@ -37,11 +37,11 @@ describe('Level 1 · core flow', () => {
   let full;
   before(async () => {
     t = await startApp();
-    meetup = t.makeEvent({ title: 'Cebu Dev Meetup 2026', capacity: 30 });
-    other = t.makeEvent({ title: 'Mobile Dev Workshop', capacity: 10 });
-    full = t.makeEvent({ title: 'Full House Night', capacity: 2 });
-    t.addRegistration(full);
-    t.addRegistration(full);
+    meetup = await t.makeEvent({ title: 'Cebu Dev Meetup 2026', capacity: 30 });
+    other = await t.makeEvent({ title: 'Mobile Dev Workshop', capacity: 10 });
+    full = await t.makeEvent({ title: 'Full House Night', capacity: 2 });
+    await t.addRegistration(full);
+    await t.addRegistration(full);
   });
   after(() => t.close());
 
@@ -72,7 +72,7 @@ describe('Level 1 · core flow', () => {
     assert.ok(page.text.includes(expectedSvg), 'page embeds the QR of the ticket code');
     assert.equal(decodeQr(res.code), res.code);
 
-    const row = t.reg(res.code);
+    const row = await t.reg(res.code);
     assert.equal(row.email, 'juan@example.com');
     assert.equal(row.mobile, '09171234567');
     assert.equal(row.status, 'confirmed');
@@ -120,14 +120,14 @@ describe('Level 1 · core flow', () => {
     const second = await c.register(meetup, { email: 'TWICE@example.com' });
     assert.equal(second.status, 409);
     assert.match(second.text, /already registered for this event/);
-    const { n } = t.db.prepare("SELECT COUNT(*) AS n FROM registrations WHERE email = 'twice@example.com'").get();
+    const { n } = await t.get("SELECT COUNT(*) AS n FROM registrations WHERE email = 'twice@example.com'");
     assert.equal(n, 1);
     // The same email may register for a different event.
     assert.equal((await c.register(other, { email: 'twice@example.com' })).status, 303);
   });
 
   it('shows field errors for a bad email and a 10-digit mobile, and saves nothing', async () => {
-    const before = t.db.prepare('SELECT COUNT(*) AS n FROM registrations').get().n;
+    const before = (await t.get('SELECT COUNT(*) AS n FROM registrations')).n;
     const res = await t.client().register(meetup, { name: 'Bad Input', email: 'not-an-email', mobile: '0917123456' });
     assert.equal(res.status, 422);
     assert.match(res.text, /id="f-email-error"[^>]*>.*Enter a valid email address/s);
@@ -138,7 +138,7 @@ describe('Level 1 · core flow', () => {
     assert.match(empty.text, /Enter your full name/);
     assert.match(empty.text, /Enter your email address/);
     assert.match(empty.text, /Enter your mobile number/);
-    assert.equal(t.db.prepare('SELECT COUNT(*) AS n FROM registrations').get().n, before);
+    assert.equal((await t.get('SELECT COUNT(*) AS n FROM registrations')).n, before);
   });
 
   it('shows a full event as "Full" with the Register button disabled, and the server refuses extra registrations', async () => {
@@ -148,7 +148,7 @@ describe('Level 1 · core flow', () => {
     // Skipping the disabled button and posting directly still fails.
     const res = await t.client().register(full, { email: 'sneaky@example.com' });
     assert.equal(res.status, 409);
-    assert.equal(t.db.prepare("SELECT COUNT(*) AS n FROM registrations WHERE event_id = ? AND status IN ('confirmed','checked_in')").get(full).n, 2);
+    assert.equal((await t.get("SELECT COUNT(*) AS n FROM registrations WHERE event_id = ? AND status IN ('confirmed','checked_in')", full)).n, 2);
   });
 
   it('sends signed-out visitors from staff pages to the sign-in page (server-side)', async () => {
@@ -165,8 +165,8 @@ describe('Level 1 · core flow', () => {
     assert.match(wrong.text, /Wrong username or password/);
   });
 
-  it('stores staff passwords as bcrypt hashes', () => {
-    for (const row of t.db.prepare('SELECT password_hash FROM staff_users').all()) {
+  it('stores staff passwords as bcrypt hashes', async () => {
+    for (const row of await t.all('SELECT password_hash FROM staff_users')) {
       assert.match(row.password_hash, /^\$2[aby]\$10\$/);
     }
   });
@@ -179,7 +179,7 @@ describe('Level 1 · core flow', () => {
     assert.equal(first.tone, 'success');
     assert.equal(first.title, 'Checked in');
     assert.equal(first.name, 'Pedro Penduko');
-    assert.equal(t.reg(code).checked_in_at, '2026-12-05T12:00:00+08:00');
+    assert.equal((await t.reg(code)).checked_in_at, '2026-12-05T12:00:00+08:00');
 
     t.setNow(new Date(NOW.getTime() + 15 * 60_000));
     const again = await staff.checkIn(meetup, code.toLowerCase());
@@ -188,7 +188,7 @@ describe('Level 1 · core flow', () => {
     assert.equal(again.tone, 'warning');
     assert.equal(again.title, 'Already checked in');
     assert.match(again.message, /First checked in at 12:00 PM/);
-    assert.equal(t.reg(code).checked_in_at, '2026-12-05T12:00:00+08:00', 'first time is kept');
+    assert.equal((await t.reg(code)).checked_in_at, '2026-12-05T12:00:00+08:00', 'first time is kept');
   });
 
   it('shows "Invalid ticket" for a made-up code and for a real code from another event', async () => {
@@ -202,7 +202,7 @@ describe('Level 1 · core flow', () => {
     const wrongEvent = await staff.checkIn(meetup, code);
     assert.equal(wrongEvent.result, 'invalid');
     assert.match(wrongEvent.message, /different event/);
-    assert.equal(t.reg(code).status, 'confirmed', 'not checked in anywhere');
+    assert.equal((await t.reg(code)).status, 'confirmed', 'not checked in anywhere');
   });
 
   it('check-in works as a plain form post too (no JavaScript / USB scanner)', async () => {
@@ -219,9 +219,7 @@ describe('Level 1 · core flow', () => {
     const staff = await t.staffClient('organizer');
     const res = await staff.get(`/staff/events/${meetup}/attendees`);
     assert.equal(res.status, 200);
-    const counts = t.db
-      .prepare("SELECT SUM(status IN ('confirmed','checked_in')) AS reg, SUM(status = 'checked_in') AS ci FROM registrations WHERE event_id = ?")
-      .get(meetup);
+    const counts = await t.get("SELECT SUM(status IN ('confirmed','checked_in')) AS reg, SUM(status = 'checked_in') AS ci FROM registrations WHERE event_id = ?", meetup);
     assert.match(res.text, new RegExp(`<dt>Registered</dt><dd>${counts.reg} <span>/ 30</span></dd>`));
     assert.match(res.text, new RegExp(`<dt>Checked in</dt><dd>${counts.ci} <span>/ ${counts.reg}</span></dd>`));
     for (const col of ['Name', 'Email', 'Mobile', 'Ticket code', 'Registered at', 'Status']) assert.ok(res.text.includes(`>${col}</th>`), col);
@@ -229,7 +227,7 @@ describe('Level 1 · core flow', () => {
     const search = await staff.get(`/staff/events/${meetup}/attendees?q=pedro`);
     assert.match(search.text, /Pedro Penduko/);
     assert.ok(!search.text.includes('Maria Santos'));
-    const byCode = t.db.prepare("SELECT ticket_code FROM registrations WHERE full_name = 'Maria Santos'").get().ticket_code;
+    const byCode = (await t.get("SELECT ticket_code FROM registrations WHERE full_name = 'Maria Santos'")).ticket_code;
     const search2 = await staff.get(`/staff/events/${meetup}/attendees?q=${byCode.slice(-5)}`);
     assert.match(search2.text, /Maria Santos/);
   });

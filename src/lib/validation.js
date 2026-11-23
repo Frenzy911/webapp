@@ -107,6 +107,7 @@ function validateStaffUser(body) {
   const password = str(body.password);
   const errors = {};
   if (!values.name) errors.name = 'Enter a name.';
+  else if (values.name.length > 100) errors.name = 'Keep the name under 100 characters.';
   if (!/^[a-z0-9._-]{3,32}$/.test(values.username)) errors.username = 'Use 3–32 letters, numbers, dots, dashes or underscores.';
   if (password.length < 8) errors.password = 'Use at least 8 characters.';
   if (!['organizer', 'door'].includes(values.role)) errors.role = 'Choose a role.';

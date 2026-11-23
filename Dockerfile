@@ -9,12 +9,10 @@ COPY public ./public
 COPY scripts ./scripts
 COPY .env.example ./
 
-# Keep the SQLite file on a mounted volume so data survives redeploys.
+# Data lives in MySQL: set DATABASE_URL (or MYSQL_HOST, MYSQL_USER, ...) when you run the container.
 ENV NODE_ENV=production \
     PORT=3000 \
-    DB_FILE=/data/app.db \
     TRUST_PROXY=1
-VOLUME /data
 EXPOSE 3000
 
-CMD ["node", "--disable-warning=ExperimentalWarning", "src/server.js"]
+CMD ["node", "src/server.js"]
