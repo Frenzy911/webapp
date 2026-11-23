@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="csrf-token" content="<%= csrfToken %>">
-  <meta name="theme-color" content="#0b5cad">
+  <meta name="theme-color" content="#f8f7fc">
   <title><%= locals.title ? `${locals.title} · ${appName}` : appName %></title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/app.css">
@@ -13,32 +13,48 @@
 <% const inStaff = currentPath.startsWith('/staff') && currentStaff; %>
 <body class="<%= inStaff ? 'staff' : 'public' %>">
   <a class="skip-link" href="#main">Skip to content</a>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" focusable="false">
+    <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></symbol>
+    <symbol id="icon-pin" viewBox="0 0 24 24"><path d="M20 10c0 5-8 10-8 10s-8-5-8-10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="icon-ticket" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a3 3 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a3 3 0 0 0 0-6V7Z"/><path d="M14 8v1m0 3v1m0 3v1"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  </svg>
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <a class="brand" href="<%= inStaff ? '/staff' : '/' %>">
-        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 8h6v6H8zM18 8h6v6h-6zM8 18h6v6H8zM19 19h2v2h-2zM22 22h2v2h-2zM18 22h2v2h-2zM22 18h2v2h-2z" fill="#fff"/></svg>
-        <span><%= appName %><% if (inStaff) { %> <span class="brand-tag">Staff</span><% } %></span>
-      </a>
-      <% if (inStaff) { %>
-        <form method="post" action="/staff/logout" class="signout">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <span class="who"><%= currentStaff.name %> · <%= currentStaff.role === 'organizer' ? 'Organizer' : 'Door staff' %></span>
-          <button type="submit" class="link-button">Sign out</button>
-        </form>
-      <% } %>
+      <div class="brand-row">
+        <a class="brand" href="<%= inStaff ? '/staff' : '/' %>">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 8h6v6H8zM18 8h6v6h-6zM8 18h6v6H8zM19 19h2v2h-2zM22 22h2v2h-2zM18 22h2v2h-2zM22 18h2v2h-2z" fill="#fff"/></svg>
+          <span><%= appName %><% if (inStaff) { %> <span class="brand-tag">Staff</span><% } %></span>
+        </a>
+        <% if (inStaff) { %>
+          <form method="post" action="/staff/logout" class="signout">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <span class="who"><%= currentStaff.name %> · <%= currentStaff.role === 'organizer' ? 'Organizer' : 'Door staff' %></span>
+            <button type="submit" class="btn btn-small btn-ghost">Sign out</button>
+          </form>
+        <% } %>
+      </div>
+      <nav class="nav" aria-label="Main">
+        <% const nav = inStaff
+             ? (currentStaff.role === 'organizer'
+                 ? [['/staff/dashboard', 'Dashboard'], ['/staff/events', 'Events'], ['/staff/checkin', 'Check-in'], ['/staff/audit', 'Audit log'], ['/staff/users', 'Staff'], ['/staff/outbox', 'Emails']]
+                 : [['/staff/checkin', 'Check-in']])
+             : [['/', 'Events'], ['/tickets/find', 'Find my ticket']];
+           const atCheckIn = currentPath.endsWith('/checkin');
+           nav.forEach(([href, label]) => {
+             const active = href === '/' ? currentPath === '/' || currentPath.startsWith('/events/')
+               : href === '/tickets/find' ? currentPath.startsWith('/tickets/')
+               : href === '/staff/checkin' ? atCheckIn
+               : currentPath.startsWith(href) && !atCheckIn; %>
+          <a href="<%= href %>"<%- active ? ' aria-current="page"' : '' %>><%= label %></a>
+        <% }) %>
+        <% if (!inStaff) { %>
+          <a class="nav-staff" href="/staff"><%= currentStaff ? 'Staff area' : 'Staff sign-in' %></a>
+        <% } else { %>
+          <a class="nav-staff" href="/">Public site</a>
+        <% } %>
+      </nav>
     </div>
-    <nav class="wrap nav" aria-label="Main">
-      <% const nav = inStaff
-           ? (currentStaff.role === 'organizer'
-               ? [['/staff/dashboard', 'Dashboard'], ['/staff/events', 'Events'], ['/staff/checkin', 'Check-in'], ['/staff/audit', 'Audit log'], ['/staff/users', 'Staff'], ['/staff/outbox', 'Emails']]
-               : [['/staff/checkin', 'Check-in']])
-           : [['/', 'Events'], ['/tickets/find', 'Find my ticket']];
-         nav.forEach(([href, label]) => {
-           const active = href === '/' ? (currentPath === '/' || currentPath.startsWith('/events')) : currentPath.startsWith(href); %>
-        <a href="<%= href %>"<%- active ? ' aria-current="page"' : '' %>><%= label %></a>
-      <% }) %>
-      <% if (!inStaff) { %><a class="nav-staff" href="/staff"><%= currentStaff ? 'Staff area' : 'Staff sign-in' %></a><% } else { %><a class="nav-staff" href="/">Public site</a><% } %>
-    </nav>
   </header>
 
   <main id="main" class="wrap">
@@ -50,8 +66,11 @@
     <%- body %>
   </main>
 
-  <footer class="footer wrap">
-    <p>All times are Cebu time (Asia/Manila, UTC+8). Free events only.</p>
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <a href="/" class="footer-brand"><%= appName %></a>
+      <p>All times are Cebu time (UTC+8).</p>
+    </div>
   </footer>
 </body>
 </html>

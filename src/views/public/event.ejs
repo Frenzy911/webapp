@@ -1,40 +1,49 @@
 <a class="back-link" href="/">← All events</a>
 
-<article class="card event-detail">
-  <p class="event-card-tags">
-    <% if (ev.hasEnded) { %><span class="badge badge-muted">Ended</span>
-    <% } else if (ev.status === 'closed') { %><span class="badge badge-muted">Registration closed</span>
+<article class="event-detail">
+  <header class="event-detail-head">
+    <h1><%= ev.title %></h1>
+    <% if (ev.hasEnded) { %>
+      <span class="badge badge-muted">Ended</span>
+    <% } else if (ev.status === 'closed') { %>
+      <span class="badge badge-muted">Registration closed</span>
     <% } else { %>
-      <% if (ev.hasStarted) { %><span class="badge badge-info">Happening now</span><% } %>
+      <% if (ev.hasStarted) { %><span class="badge badge-success badge-live">Happening now</span><% } %>
       <% if (ev.isFull) { %><span class="badge badge-danger">Full</span><% } %>
     <% } %>
-  </p>
-  <h1><%= ev.title %></h1>
+  </header>
 
-  <dl class="facts">
-    <div><dt>Date</dt><dd><%= ev.dateLabel %></dd></div>
-    <div><dt>Time</dt><dd><%= ev.timeLabel %> <span class="muted">Cebu time</span></dd></div>
-    <div><dt>Venue</dt><dd><%= ev.venue %></dd></div>
-    <div><dt>Spots</dt><dd>
-      <% if (ev.isFull) { %><strong class="text-danger">Full</strong> · <%= ev.capacity %> of <%= ev.capacity %> taken<% if (ev.waitlisted) { %> · <%= ev.waitlisted %> on waitlist<% } %>
-      <% } else { %><strong><%= ev.spotsLeft %></strong> of <%= ev.capacity %> spots left<% } %>
-    </dd></div>
-  </dl>
+  <div class="event-detail-grid">
+    <section class="card event-info" aria-labelledby="event-info-title">
+      <h2 id="event-info-title">Event details</h2>
+      <dl class="facts">
+        <div><dt>Date</dt><dd><%= ev.dateLabel %></dd></div>
+        <div><dt>Time</dt><dd><%= ev.timeLabel %> <span class="muted">Cebu time</span></dd></div>
+        <div><dt>Venue</dt><dd><%= ev.venue %></dd></div>
+      </dl>
+      <% if (ev.description) { %><div class="description"><%= ev.description %></div><% } %>
+    </section>
 
-  <% if (ev.description) { %><div class="description"><%= ev.description %></div><% } %>
-
-  <div class="cta">
-    <% if (ev.hasEnded) { %>
-      <button class="btn btn-big" type="button" disabled>Registration closed · event ended</button>
-    <% } else if (ev.status === 'closed') { %>
-      <button class="btn btn-big" type="button" disabled>Registration closed</button>
-    <% } else if (ev.isFull) { %>
-      <button class="btn btn-big" type="button" disabled aria-describedby="full-note">Register · Full</button>
-      <p class="cta-note" id="full-note">This event is full. You can join the waitlist and we'll email you if a spot opens.</p>
-      <a class="btn btn-secondary btn-big" href="/events/<%= ev.id %>/register">Join the waitlist</a>
-    <% } else { %>
-      <a class="btn btn-primary btn-big" href="/events/<%= ev.id %>/register">Register</a>
-    <% } %>
+    <section class="card event-booking" aria-labelledby="event-booking-title">
+      <h2 id="event-booking-title">Registration</h2>
+      <p class="booking-spots">
+        <% if (ev.isFull) { %><strong class="text-danger">Full</strong> · <%= ev.capacity %> of <%= ev.capacity %> taken<% if (ev.waitlisted) { %> · <%= ev.waitlisted %> on waitlist<% } %>
+        <% } else { %><strong><%= ev.spotsLeft %></strong> of <%= ev.capacity %> spots left<% } %>
+      </p>
+      <div class="cta">
+        <% if (ev.hasEnded) { %>
+          <button class="btn btn-big" type="button" disabled>Registration closed · event ended</button>
+        <% } else if (ev.status === 'closed') { %>
+          <button class="btn btn-big" type="button" disabled>Registration closed</button>
+        <% } else if (ev.isFull) { %>
+          <button class="btn btn-big" type="button" disabled aria-describedby="full-note">Register · Full</button>
+          <p class="cta-note" id="full-note">Join the waitlist and we'll email you if a spot opens.</p>
+          <a class="btn btn-primary btn-big" href="/events/<%= ev.id %>/register">Join the waitlist</a>
+        <% } else { %>
+          <a class="btn btn-primary btn-big" href="/events/<%= ev.id %>/register">Register</a>
+        <% } %>
+      </div>
+      <p class="muted small">Already registered? <a href="/tickets/find">Find your ticket</a></p>
+    </section>
   </div>
-  <p class="muted small">Already registered? <a href="/tickets/find">Find your ticket</a></p>
 </article>

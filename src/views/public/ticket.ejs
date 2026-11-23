@@ -1,5 +1,5 @@
 <% if (justRegistered) { %>
-  <div class="notice notice-success" role="status">
+  <div class="notice notice-success ticket-notice" role="status">
     <% if (reg.status === 'waitlisted') { %>
       <strong>You're on the waitlist.</strong><% if (emailSent) { %> We sent the details to <%= reg.email %>.<% } %> We'll email you if a spot opens.
     <% } else { %>
