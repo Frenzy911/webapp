@@ -1,0 +1,17 @@
+<div class="card form-card">
+  <h1>Find my ticket</h1>
+  <p class="lead">Enter your ticket code and the email or mobile number you registered with.</p>
+
+  <% if (notFound) { %>
+    <div class="notice notice-error" role="alert">
+      <strong>Ticket not found.</strong> Check the ticket code and your email or mobile number, then try again.
+    </div>
+  <% } %>
+
+  <form method="post" action="/tickets/find" class="stack" novalidate>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <%- include('../partials/field', { name: 'code', label: 'Ticket code', value: values.code, placeholder: 'CDM-7K3P9QXM', autocomplete: 'off', maxlength: 32, extra: 'autocapitalize="characters" spellcheck="false" required', errors: {} }) %>
+    <%- include('../partials/field', { name: 'contact', label: 'Email or mobile number', value: values.contact, autocomplete: 'email', maxlength: 254, extra: 'required spellcheck="false"', errors: {} }) %>
+    <button class="btn btn-primary btn-big" type="submit">Find ticket</button>
+  </form>
+</div>

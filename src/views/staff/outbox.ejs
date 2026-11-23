@@ -1,0 +1,30 @@
+<section class="page-head">
+  <h1>Emails</h1>
+  <% if (smtpConfigured) { %>
+    <p class="lead">Ticket emails are sent through your SMTP sandbox. A copy of each one is kept here.</p>
+  <% } else { %>
+    <div class="notice notice-info"><strong>SMTP is not set up</strong>, so emails are saved here instead of being sent. Add your Mailtrap / Ethereal / Resend test settings to <span class="mono">.env</span> (see README) to deliver them to a sandbox inbox.</div>
+  <% } %>
+</section>
+
+<div class="outbox<%= selected ? ' has-selected' : '' %>">
+  <ul class="outbox-list card">
+    <% if (!rows.length) { %><li class="muted">No emails yet.</li><% } %>
+    <% rows.forEach((m) => { %>
+      <li>
+        <a href="/staff/outbox/<%= m.id %>"<%- selected && selected.id === m.id ? ' aria-current="true"' : '' %>>
+          <span class="outbox-subject"><%= m.subject %></span>
+          <span class="meta"><%= m.to_address %> · <%= fmt.formatDateTime(m.created_at) %></span>
+          <span class="badge badge-<%= m.status === 'sent' ? 'success' : m.status === 'failed' ? 'danger' : 'muted' %>"><%= m.status === 'saved' ? 'Saved (not sent)' : m.status === 'sent' ? 'Sent' : 'Failed' %></span>
+        </a>
+      </li>
+    <% }) %>
+  </ul>
+  <% if (selected) { %>
+    <section class="outbox-preview card">
+      <p><strong><%= selected.subject %></strong><br><span class="meta">To <%= selected.to_address %> · <%= fmt.formatDateTime(selected.created_at) %></span></p>
+      <% if (selected.error) { %><div class="notice notice-error">Send failed: <%= selected.error %></div><% } %>
+      <iframe src="/staff/outbox/<%= selected.id %>/raw" title="Email preview" sandbox="allow-same-origin" class="outbox-frame"></iframe>
+    </section>
+  <% } %>
+</div>

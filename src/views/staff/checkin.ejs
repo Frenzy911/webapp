@@ -1,0 +1,88 @@
+<div class="checkin" data-event-id="<%= ev.id %>">
+  <div class="checkin-head">
+    <div>
+      <a class="back-link" href="/staff/checkin">← Change event</a>
+      <h1 class="checkin-title"><%= ev.title %></h1>
+      <p class="meta"><%= ev.dateLabel %> · <%= ev.timeLabel %> · <%= ev.venue %></p>
+    </div>
+    <div class="counter" aria-live="polite">
+      <span class="counter-num"><span id="count-in"><%= stats.checkedIn %></span> / <span id="count-total"><%= stats.registered %></span></span>
+      <span class="counter-label">checked in</span>
+      <progress id="count-bar" max="<%= Math.max(stats.registered, 1) %>" value="<%= stats.checkedIn %>"><%= stats.checkedIn %> of <%= stats.registered %></progress>
+    </div>
+  </div>
+
+  <% if (!ev.isEventDay) { %>
+    <div class="notice notice-warning"><strong>Not the event day.</strong> Tickets can only be checked in on <%= ev.dateLabel %>. Scans today will show the ticket status but won't check anyone in.</div>
+  <% } %>
+
+  <div id="result" class="result<%= result ? ` result-${result.tone}` : ' result-idle' %>" role="status" aria-live="assertive" aria-atomic="true">
+    <% if (result) { %>
+      <span class="result-icon" aria-hidden="true"><%= result.icon %></span>
+      <div class="result-text">
+        <p class="result-title"><%= result.title %></p>
+        <% if (result.name) { %><p class="result-name"><%= result.name %></p><% } %>
+        <p class="result-msg"><%= result.message %></p>
+        <% if (result.code) { %><p class="result-code mono"><%= result.code %></p><% } %>
+      </div>
+      <% if (result.result === 'checked_in') { %>
+        <form method="post" action="/staff/registrations/<%= result.registrationId %>/undo-checkin" class="result-undo" data-confirm="Undo the check-in for <%= result.name %>?">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="return_to" value="/staff/events/<%= ev.id %>/checkin">
+          <button class="btn btn-small btn-ghost" type="submit">Undo</button>
+        </form>
+      <% } %>
+    <% } else { %>
+      <span class="result-icon" aria-hidden="true">⌁</span>
+      <div class="result-text">
+        <p class="result-title">Ready to scan</p>
+        <p class="result-msg">Scan a QR code with the camera, or type the ticket code below.</p>
+      </div>
+    <% } %>
+  </div>
+  <div class="result-timer" id="result-timer" hidden><span></span></div>
+
+  <section class="scanner" id="scanner" hidden>
+    <div class="scanner-view">
+      <video id="scanner-video" playsinline muted></video>
+      <div class="scanner-frame" aria-hidden="true"></div>
+    </div>
+    <p class="scanner-status" id="scanner-status">Starting camera…</p>
+  </section>
+
+  <div class="scanner-controls">
+    <button type="button" class="btn btn-primary btn-big" id="camera-toggle" hidden>📷 Scan with camera</button>
+  </div>
+
+  <form method="post" action="/staff/events/<%= ev.id %>/checkin" class="manual" id="manual-form" autocomplete="off">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label for="code-input">Ticket code</label>
+    <div class="manual-row">
+      <input id="code-input" name="code" type="text" placeholder="e.g. CDM-7K3P9QXM" autocapitalize="characters" spellcheck="false" autocomplete="off" enterkeyhint="go" maxlength="32" autofocus required>
+      <button class="btn btn-primary" type="submit">Check in</button>
+    </div>
+    <p class="hint">A USB or Bluetooth QR scanner that types the code and presses Enter works here too.</p>
+  </form>
+
+  <section class="recent">
+    <h2 class="section-title">Recent check-ins</h2>
+    <ul id="recent-list" class="recent-list">
+      <% if (!recent.length) { %><li class="muted" data-empty>No one checked in yet.</li><% } %>
+      <% recent.forEach((r) => { %>
+        <li>
+          <span><strong><%= r.name %></strong> <span class="mono muted"><%= r.code %></span></span>
+          <span class="recent-side">
+            <span class="muted"><%= r.time %></span>
+            <form method="post" action="/staff/registrations/<%= r.id %>/undo-checkin" data-confirm="Undo the check-in for <%= r.name %>?" data-undo="<%= r.id %>">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="return_to" value="/staff/events/<%= ev.id %>/checkin">
+              <button class="link-button" type="submit">Undo</button>
+            </form>
+          </span>
+        </li>
+      <% }) %>
+    </ul>
+  </section>
+</div>
+<script src="/vendor/jsqr/jsQR.js" defer></script>
+<script src="/static/js/checkin.js" defer></script>

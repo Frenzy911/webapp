@@ -1,0 +1,30 @@
+<section class="page-head">
+  <h1>Check-in</h1>
+  <p class="lead">Choose the event you are working at.</p>
+</section>
+
+<% const today = events.filter((e) => e.isEventDay); const later = events.filter((e) => !e.isEventDay); %>
+
+<% if (!events.length) { %>
+  <div class="card empty-state"><p>No published events today or coming up.</p></div>
+<% } %>
+
+<% [['Today', today], ['Coming up', later]].forEach(([heading, list]) => { if (!list.length) return; %>
+  <h2 class="section-title"><%= heading %></h2>
+  <ul class="pick-list">
+    <% list.forEach((ev) => { %>
+      <li>
+        <a class="pick" href="/staff/events/<%= ev.id %>/checkin">
+          <span class="pick-main">
+            <strong><%= ev.title %></strong>
+            <span class="meta"><%= ev.dateLabel %> · <%= ev.timeLabel %> · <%= ev.venue %></span>
+          </span>
+          <span class="pick-side">
+            <span class="pick-count"><%= ev.checked_in %> / <%= ev.registered %></span>
+            <span class="meta">checked in</span>
+          </span>
+        </a>
+      </li>
+    <% }) %>
+  </ul>
+<% }) %>

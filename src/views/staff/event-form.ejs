@@ -1,0 +1,32 @@
+<a class="back-link" href="<%= ev ? `/staff/events/${ev.id}/attendees` : '/staff/events' %>">← Back</a>
+
+<div class="card form-card wide">
+  <h1><%= ev ? 'Edit event' : 'New event' %></h1>
+  <% if (ev) { %>
+    <p class="meta">Ticket codes start with <span class="mono"><%= ev.code_prefix %>-</span> · <%= ev.registered %> registered · <%= ev.waitlisted %> on waitlist</p>
+  <% } %>
+  <% if (Object.keys(errors).length) { %>
+    <div class="notice notice-error" role="alert">Please fix the <%= Object.keys(errors).length === 1 ? 'field' : `${Object.keys(errors).length} fields` %> marked below. Nothing was saved.</div>
+  <% } %>
+
+  <form method="post" action="<%= ev ? `/staff/events/${ev.id}` : '/staff/events' %>" class="stack" novalidate>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <%- include('../partials/field', { name: 'title', label: 'Title', value: values.title, maxlength: 120 }) %>
+    <%- include('../partials/field', { name: 'description', label: 'Description', type: 'textarea', value: values.description, rows: 5 }) %>
+    <%- include('../partials/field', { name: 'venue', label: 'Venue', value: values.venue, maxlength: 160 }) %>
+    <div class="grid-3">
+      <%- include('../partials/field', { name: 'date', label: 'Date', type: 'date', value: values.date }) %>
+      <%- include('../partials/field', { name: 'start_time', label: 'Start time', type: 'time', value: values.startTime }) %>
+      <%- include('../partials/field', { name: 'end_time', label: 'End time', type: 'time', value: values.endTime }) %>
+    </div>
+    <p class="hint">Cebu time (UTC+8). Shown to attendees in 12-hour format, e.g. 6:00 PM.</p>
+    <div class="grid-2">
+      <%- include('../partials/field', { name: 'capacity', label: 'Capacity', type: 'number', value: values.capacity, min: 1, inputmode: 'numeric', hint: ev ? `At least ${Math.max(ev.registered, 1)} (people already registered).` : 'At least 1.' }) %>
+      <%- include('../partials/field', { name: 'status', label: 'Status', type: 'select', value: values.status, options: [['draft', 'Draft (hidden)'], ['published', 'Published (open)'], ['closed', 'Closed (no new registrations)']] }) %>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit"><%= ev ? 'Save changes' : 'Create event' %></button>
+      <a class="btn btn-ghost" href="<%= ev ? `/staff/events/${ev.id}/attendees` : '/staff/events' %>">Cancel</a>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title><%= ev.title %></title></head>
+<body style="margin:0;padding:0;background:#f3f5f8;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1b2430;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #dde3ea;">
+        <tr><td style="background:#0b5cad;color:#ffffff;padding:20px 24px;">
+          <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;">
+            <%= kind === 'waitlist' ? "You're on the waitlist" : kind === 'promotion' ? 'Your spot is confirmed' : 'Your ticket' %>
+          </div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px;"><%= ev.title %></div>
+        </td></tr>
+        <tr><td style="padding:24px;">
+          <p style="margin:0 0 16px;font-size:16px;">Hi <%= reg.full_name %>,</p>
+          <% if (kind === 'registration') { %>
+            <p style="margin:0 0 16px;font-size:16px;">You're registered. Show this QR code at the door to check in.</p>
+          <% } else if (kind === 'promotion') { %>
+            <p style="margin:0 0 16px;font-size:16px;"><strong>Good news: a spot opened up and you've been moved off the waitlist.</strong> Your ticket is now confirmed. Show this QR code at the door.</p>
+          <% } else { %>
+            <p style="margin:0 0 16px;font-size:16px;">The event is full, so you're on the waitlist<%= waitlistPosition ? ` at position #${waitlistPosition}` : '' %>. <strong>This is not a confirmed ticket.</strong> If a spot opens, we'll email you your QR ticket.</p>
+          <% } %>
+
+          <% if (qrSrc) { %>
+            <div style="text-align:center;margin:8px 0 20px;">
+              <img src="<%= qrSrc %>" width="220" height="220" alt="QR code for ticket <%= reg.ticket_code %>" style="display:inline-block;border:1px solid #dde3ea;border-radius:8px;">
+              <div style="font-family:Consolas,Menlo,monospace;font-size:22px;font-weight:700;letter-spacing:.06em;margin-top:8px;"><%= reg.ticket_code %></div>
+            </div>
+          <% } %>
+
+          <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;font-size:15px;border-top:1px solid #e6eaf0;">
+            <tr><td style="padding:8px 0;color:#5b6675;width:90px;">Date</td><td style="padding:8px 0;"><%= dateLabel %></td></tr>
+            <tr><td style="padding:8px 0;color:#5b6675;">Time</td><td style="padding:8px 0;"><%= timeLabel %> (Cebu time)</td></tr>
+            <tr><td style="padding:8px 0;color:#5b6675;">Venue</td><td style="padding:8px 0;"><%= ev.venue %></td></tr>
+            <tr><td style="padding:8px 0;color:#5b6675;"><%= kind === 'waitlist' ? 'Reference' : 'Ticket code' %></td><td style="padding:8px 0;font-family:Consolas,Menlo,monospace;"><%= reg.ticket_code %></td></tr>
+          </table>
+
+          <p style="margin:24px 0 8px;text-align:center;">
+            <a href="<%= ticketUrl %>" style="display:inline-block;background:#0b5cad;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:8px;"><%= kind === 'waitlist' ? 'View my waitlist status' : 'Open my ticket' %></a>
+          </p>
+          <p style="margin:16px 0 0;font-size:13px;color:#5b6675;">You can also find your ticket any time with your ticket code and this email address. Can't make it? Open your ticket and cancel so someone on the waitlist can take your spot.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>

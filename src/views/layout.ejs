@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="csrf-token" content="<%= csrfToken %>">
+  <meta name="theme-color" content="#0b5cad">
+  <title><%= locals.title ? `${locals.title} · ${appName}` : appName %></title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/app.js" defer></script>
+</head>
+<% const inStaff = currentPath.startsWith('/staff') && currentStaff; %>
+<body class="<%= inStaff ? 'staff' : 'public' %>">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="<%= inStaff ? '/staff' : '/' %>">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 8h6v6H8zM18 8h6v6h-6zM8 18h6v6H8zM19 19h2v2h-2zM22 22h2v2h-2zM18 22h2v2h-2zM22 18h2v2h-2z" fill="#fff"/></svg>
+        <span><%= appName %><% if (inStaff) { %> <span class="brand-tag">Staff</span><% } %></span>
+      </a>
+      <% if (inStaff) { %>
+        <form method="post" action="/staff/logout" class="signout">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <span class="who"><%= currentStaff.name %> · <%= currentStaff.role === 'organizer' ? 'Organizer' : 'Door staff' %></span>
+          <button type="submit" class="link-button">Sign out</button>
+        </form>
+      <% } %>
+    </div>
+    <nav class="wrap nav" aria-label="Main">
+      <% const nav = inStaff
+           ? (currentStaff.role === 'organizer'
+               ? [['/staff/dashboard', 'Dashboard'], ['/staff/events', 'Events'], ['/staff/checkin', 'Check-in'], ['/staff/audit', 'Audit log'], ['/staff/users', 'Staff'], ['/staff/outbox', 'Emails']]
+               : [['/staff/checkin', 'Check-in']])
+           : [['/', 'Events'], ['/tickets/find', 'Find my ticket']];
+         nav.forEach(([href, label]) => {
+           const active = href === '/' ? (currentPath === '/' || currentPath.startsWith('/events')) : currentPath.startsWith(href); %>
+        <a href="<%= href %>"<%- active ? ' aria-current="page"' : '' %>><%= label %></a>
+      <% }) %>
+      <% if (!inStaff) { %><a class="nav-staff" href="/staff"><%= currentStaff ? 'Staff area' : 'Staff sign-in' %></a><% } else { %><a class="nav-staff" href="/">Public site</a><% } %>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap">
+    <% takeFlash().forEach((f) => { %>
+      <div class="notice <%= f.type === 'error' ? 'notice-error' : 'notice-success' %>" role="<%= f.type === 'error' ? 'alert' : 'status' %>">
+        <strong><%= f.type === 'error' ? 'Not done:' : 'Done:' %></strong> <%= f.message %>
+      </div>
+    <% }) %>
+    <%- body %>
+  </main>
+
+  <footer class="footer wrap">
+    <p>All times are Cebu time (Asia/Manila, UTC+8). Free events only.</p>
+  </footer>
+</body>
+</html>

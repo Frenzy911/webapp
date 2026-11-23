@@ -1,0 +1,45 @@
+<section class="page-head page-head-row">
+  <div>
+    <h1>Events</h1>
+    <p class="lead">Only <strong>Published</strong> events are visible to attendees. <strong>Closed</strong> events stop taking registrations.</p>
+  </div>
+  <a class="btn btn-primary" href="/staff/events/new">+ New event</a>
+</section>
+
+<div class="table-wrap card">
+  <table class="table">
+    <thead>
+      <tr><th scope="col">Event</th><th scope="col">Status</th><th scope="col">Registered</th><th scope="col">Waitlist</th><th scope="col">Actions</th></tr>
+    </thead>
+    <tbody>
+      <% events.forEach((ev) => { %>
+        <tr>
+          <td>
+            <a href="/staff/events/<%= ev.id %>/attendees"><strong><%= ev.title %></strong></a>
+            <div class="meta"><%= ev.dateLabel %> · <%= ev.timeLabel %><%= ev.hasEnded ? ' · Ended' : '' %></div>
+          </td>
+          <td><span class="badge badge-<%= ev.status === 'published' ? 'success' : ev.status === 'draft' ? 'muted' : 'warning' %>"><%= statusLabel(ev.status) %></span></td>
+          <td><%= ev.registered %> / <%= ev.capacity %></td>
+          <td><%= ev.waitlisted %></td>
+          <td class="actions-cell">
+            <a class="btn btn-small" href="/staff/events/<%= ev.id %>/edit">Edit</a>
+            <% if (ev.status !== 'published') { %>
+              <form method="post" action="/staff/events/<%= ev.id %>/status" class="inline">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="status" value="published">
+                <button class="btn btn-small btn-ghost" type="submit">Publish</button>
+              </form>
+            <% } %>
+            <% if (ev.status === 'published') { %>
+              <form method="post" action="/staff/events/<%= ev.id %>/status" class="inline" data-confirm="Close registration for <%= ev.title %>? Existing tickets keep working.">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="status" value="closed">
+                <button class="btn btn-small btn-ghost" type="submit">Close</button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>

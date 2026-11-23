@@ -1,0 +1,105 @@
+<a class="back-link" href="/staff/dashboard">← Dashboard</a>
+
+<section class="page-head page-head-row">
+  <div>
+    <h1><%= ev.title %></h1>
+    <p class="meta"><%= ev.dateLabel %> · <%= ev.timeLabel %> · <%= ev.venue %>
+      · <span class="badge badge-<%= ev.status === 'published' ? 'success' : ev.status === 'draft' ? 'muted' : 'warning' %>"><%= statusLabel(ev.status) %></span>
+      <%= ev.hasEnded ? '· Ended' : '' %></p>
+  </div>
+  <div class="head-actions">
+    <% if (ev.status !== 'draft') { %><a class="btn btn-primary" href="/staff/events/<%= ev.id %>/checkin">Open check-in</a><% } %>
+    <a class="btn" href="/staff/events/<%= ev.id %>/edit">Edit event</a>
+    <a class="btn btn-ghost" href="/staff/events/<%= ev.id %>/attendees.csv">Export CSV</a>
+  </div>
+</section>
+
+<dl class="totals">
+  <div class="total"><dt>Registered</dt><dd><%= ev.registered %> <span>/ <%= ev.capacity %></span></dd><span class="stat-help"><%= ev.spotsLeft %> spot<%= ev.spotsLeft === 1 ? '' : 's' %> left</span></div>
+  <div class="total"><dt>Checked in</dt><dd><%= ev.checked_in %> <span>/ <%= ev.registered %></span></dd><span class="stat-help"><%= ev.noShows === null ? 'event not started' : `${ev.noShows} no-show${ev.noShows === 1 ? '' : 's'} so far` %></span></div>
+  <div class="total"><dt>Waitlisted</dt><dd><%= ev.waitlisted %></dd></div>
+  <div class="total"><dt>Cancelled</dt><dd><%= ev.cancelled %></dd></div>
+</dl>
+
+<% if (ev.waitlisted > 0) { %>
+  <div class="notice <%= ev.isFull ? 'notice-info' : 'notice-warning' %> promote-bar">
+    <% if (ev.isFull) { %>
+      <span><strong><%= ev.waitlisted %></strong> on the waitlist. No open spot right now. A spot opens when someone cancels or you raise the capacity.</span>
+    <% } else { %>
+      <span><strong><%= ev.spotsLeft %></strong> spot<%= ev.spotsLeft === 1 ? '' : 's' %> open and <strong><%= ev.waitlisted %></strong> waiting.</span>
+      <form method="post" action="/staff/events/<%= ev.id %>/promote" class="inline">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn-primary btn-small" type="submit">Promote #1 on waitlist</button>
+      </form>
+    <% } %>
+  </div>
+<% } %>
+
+<form method="get" action="/staff/events/<%= ev.id %>/attendees" class="search-bar" role="search">
+  <label for="q" class="sr-only">Search by name, email or ticket code</label>
+  <input id="q" name="q" type="search" value="<%= q %>" placeholder="Search name, email or ticket code" autocomplete="off">
+  <label for="status-filter" class="sr-only">Status</label>
+  <select id="status-filter" name="status">
+    <option value="">All statuses</option>
+    <% ['confirmed', 'checked_in', 'waitlisted', 'cancelled'].forEach((s) => { %>
+      <option value="<%= s %>"<%= status === s ? ' selected' : '' %>><%= statusLabel(s) %></option>
+    <% }) %>
+  </select>
+  <button class="btn" type="submit">Search</button>
+  <% if (q || status) { %><a class="btn btn-ghost" href="/staff/events/<%= ev.id %>/attendees">Clear</a><% } %>
+</form>
+
+<p class="meta"><%= rows.length %> <%= rows.length === 1 ? 'registration' : 'registrations' %><%= q || status ? ' match' : '' %>.</p>
+
+<div class="table-wrap card">
+  <table class="table attendees">
+    <thead>
+      <tr>
+        <th scope="col">Name</th><th scope="col">Email</th><th scope="col">Mobile</th><th scope="col">Ticket code</th>
+        <th scope="col">Registered at</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (!rows.length) { %><tr><td colspan="7" class="muted">No registrations<%= q || status ? ' match your search' : ' yet' %>.</td></tr><% } %>
+      <% rows.forEach((r) => { %>
+        <tr class="row-<%= r.status %>">
+          <td><strong><%= r.full_name %></strong></td>
+          <td><%= r.email %></td>
+          <td class="nowrap"><%= r.mobile %></td>
+          <td class="mono nowrap"><%= r.ticket_code %></td>
+          <td class="nowrap"><%= fmt.formatDateTime(r.registered_at) %></td>
+          <td>
+            <% if (r.status === 'checked_in') { %>
+              <span class="badge badge-success">✓ Checked in</span>
+              <div class="meta"><%= fmt.formatTime(r.checked_in_at) %><%= r.checked_in_by_name ? ` by ${r.checked_in_by_name}` : '' %></div>
+            <% } else if (r.status === 'confirmed') { %>
+              <span class="badge badge-info">Confirmed</span>
+              <% if (r.checkin_undone_at) { %><div class="meta">Check-in undone <%= fmt.formatTime(r.checkin_undone_at) %> by <%= r.checkin_undone_by_name %></div><% } %>
+              <% if (r.promoted_at) { %><div class="meta">Promoted from waitlist</div><% } %>
+            <% } else if (r.status === 'waitlisted') { %>
+              <span class="badge badge-warning">Waitlist #<%= r.waitlist_position %></span>
+            <% } else { %>
+              <span class="badge badge-danger">✕ Cancelled</span>
+              <div class="meta"><%= fmt.formatDateTime(r.cancelled_at) %> by <%= r.cancelled_by_name || 'attendee' %></div>
+            <% } %>
+          </td>
+          <td class="actions-cell">
+            <% if (r.status === 'checked_in') { %>
+              <form method="post" action="/staff/registrations/<%= r.id %>/undo-checkin" class="inline" data-confirm="Undo the check-in for <%= r.full_name %>?">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="return_to" value="/staff/events/<%= ev.id %>/attendees">
+                <button class="btn btn-small btn-ghost" type="submit">Undo check-in</button>
+              </form>
+            <% } else if (r.status === 'confirmed' || r.status === 'waitlisted') { %>
+              <form method="post" action="/staff/registrations/<%= r.id %>/cancel" class="inline" data-confirm="Cancel the registration for <%= r.full_name %> (<%= r.ticket_code %>)?">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="return_to" value="/staff/events/<%= ev.id %>/attendees">
+                <button class="btn btn-small btn-danger-outline" type="submit">Cancel</button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>
